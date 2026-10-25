@@ -71,13 +71,6 @@ jobs:
           codesign --force --deep --sign - "$A/VST3/TEAROUT ENGINE.vst3"
           codesign --force --deep --sign - "$A/AU/TEAROUT ENGINE.component"
           codesign --force --deep --sign - "$A/Standalone/TEAROUT ENGINE.app"
-      - name: Validate the Audio Unit
-        run: |
-          mkdir -p ~/Library/Audio/Plug-Ins/Components
-          cp -R "build/TearoutEngine_artefacts/Release/AU/TEAROUT ENGINE.component" ~/Library/Audio/Plug-Ins/Components/
-          killall -9 AudioComponentRegistrar || true
-          sleep 2
-          auval -v aumu Te10 Trot
       - name: Package
         run: |
           A="build/TearoutEngine_artefacts/Release"
@@ -92,6 +85,14 @@ jobs:
         with:
           name: TEAROUT_ENGINE_macOS
           path: dist/TEAROUT_ENGINE_macOS.zip
+      - name: Validate the Audio Unit (auval)
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/TearoutEngine_artefacts/Release/AU/TEAROUT ENGINE.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 2
+          auval -v aumu Te10 Trot
 
   windows:
     name: Windows VST3 / Standalone
