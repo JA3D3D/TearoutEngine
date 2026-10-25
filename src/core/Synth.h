@@ -11,6 +11,16 @@
 
 namespace te
 {
+// A user sample for one layer (pitched from its root note, like Simpler in Classic mode).
+struct SampleData
+{
+    std::vector<float> left, right;
+    double sampleRate = 44100.0;
+    int rootNote = 60;
+    int loopStart = -1, loopEnd = -1; // sample frames; loopEnd > loopStart = sustain loop
+    float gain = 1.0f;
+};
+
 class PreviewSynth
 {
 public:
@@ -24,6 +34,9 @@ public:
     void render (float* L, float* R, int numSamples);
     // Heavier preview: more distortion on basses, chords and kick (used by the CLI renders).
     void setHeavy (bool h) noexcept { heavy = h; }
+    // Not real-time safe: call before playback starts.
+    void setLayerSample (int layer, std::shared_ptr<const SampleData> s) { if (layer >= 0 && layer < kNumLayers) layerSample[(size_t) layer] = std::move (s); }
+    void setLayerGain (int layer, float g) noexcept { if (layer >= 0 && layer < kNumLayers) layerGain[(size_t) layer] = g; }
 
 private:
     struct Voice
@@ -61,6 +74,8 @@ private:
 
     double sr = 44100.0;
     bool heavy = false;
+    std::array<std::shared_ptr<const SampleData>, kNumLayers> layerSample {};
+    std::array<float, kNumLayers> layerGain { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<Voice, kMaxVoices> voices {};
     uint64_t counter = 0;
     std::array<int, kNumLayers> monoVoice {};

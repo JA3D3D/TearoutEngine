@@ -96,6 +96,7 @@ void PreviewSynth::noteOn (int layer, int pitch, int velocity)
                 v.gate = true;
                 v.stage = 0;
                 v.t = 0;
+                v.phase[0] = 0.0;
                 v.fenv = 1;
                 v.age = ++counter;
                 return;
@@ -254,7 +255,7 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                     break;
                 }
             }
-            out *= velAmp * c.gain;
+            out *= velAmp * c.gain * layerGain[(size_t) v.layer];
         }
         else if (v.layer == (int) Layer::FX)
         {
@@ -309,7 +310,7 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                 out *= v.env;
                 if (v.env < 1e-4f) v.active = false;
             }
-            out *= velAmp * c.gain;
+            out *= velAmp * c.gain * layerGain[(size_t) v.layer];
         }
         else
         {
@@ -319,6 +320,38 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                 const double k = 1.0 - std::exp (-invSr / c.glide);
                 v.freq += (v.target - v.freq) * k;
                 if (std::fabs (v.freq - v.target) < 0.01) v.freq = v.target;
+            }
+            if (const auto* smp = layerSample[(size_t) v.layer].get())
+            {
+                // ---- user sample: pitched playback with a sustain loop ----
+                switch (v.stage)
+                {
+                    case 0: v.env += (float) (invSr / 0.002); if (v.env >= 1.0f) { v.env = 1.0f; v.stage = 1; } break;
+                    case 1: break;
+                    default: v.env *= (float) std::exp (-invSr / 0.04); if (v.env < 1e-4f) v.active = false; break;
+                }
+                const int len = (int) smp->left.size();
+                const bool looped = smp->loopEnd > smp->loopStart && smp->loopEnd <= len;
+                double pos = v.phase[0];
+                float sl = 0.0f, sr2 = 0.0f;
+                if (pos < len - 1)
+                {
+                    const int i0 = (int) pos;
+                    const float fr = (float) (pos - i0);
+                    sl = smp->left[(size_t) i0] + (smp->left[(size_t) i0 + 1] - smp->left[(size_t) i0]) * fr;
+                    sr2 = smp->right[(size_t) i0] + (smp->right[(size_t) i0 + 1] - smp->right[(size_t) i0]) * fr;
+                }
+                else if (! looped)
+                    v.active = false;
+                pos += (v.freq / midiHz (smp->rootNote)) * (smp->sampleRate * invSr);
+                if (looped && pos >= smp->loopEnd) pos -= (smp->loopEnd - smp->loopStart);
+                v.phase[0] = pos;
+                const float amp = v.env * velAmp * smp->gain * layerGain[(size_t) v.layer];
+                L[i] += sl * amp;
+                R[i] += sr2 * amp;
+                v.t += invSr;
+                if (! v.active) break;
+                continue;
             }
             const double dt = v.freq * invSr;
             float osc = 0.0f;
@@ -417,7 +450,7 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                 if (heavy && (v.layer == (int) Layer::Chords || v.layer == (int) Layer::Lead)) drive = 3.0f;
                 if (drive > 1.0f) sig = std::tanh (sig * drive) / std::tanh (drive);
             }
-            float amp = v.env * velAmp * c.gain;
+            float amp = v.env * velAmp * c.gain * layerGain[(size_t) v.layer];
             if (c.wave == 3)
             {
                 L[i] += (sig + side) * amp * 0.7f;

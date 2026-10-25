@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -62,6 +64,7 @@ static Settings parseSettings (int argc, char** argv, int first)
         else if (k == "seed") s.songSeed = (uint32_t) x;
         else if (k == "groove") s.grooveSeed = (uint32_t) x;
         else if (k == "mv") for (auto& l : s.layers) l.movement = (float) std::atof (v.c_str());
+        else if (k.rfind ("oct", 0) == 0) s.layers[(size_t) std::atoi (k.c_str() + 3)].octave = x;
         else if (k.rfind ("pat", 0) == 0) s.layers[(size_t) std::atoi (k.c_str() + 3)].pattern = x;
         else if (k.rfind ("mv", 0) == 0) s.layers[(size_t) std::atoi (k.c_str() + 2)].movement = (float) std::atof (v.c_str());
     }
@@ -98,6 +101,90 @@ static void writeWav (const std::string& path, const std::vector<float>& L, cons
 }
 
 static bool g_heavy = false;
+struct LayerSample { std::shared_ptr<SampleData> data; float gain = 1.0f; };
+static std::map<int, std::shared_ptr<SampleData>> g_samples;
+static std::map<int, float> g_gains;
+
+// PCM 16/24/32 or float WAV -> SampleData, with an automatic crossfaded sustain loop.
+static std::shared_ptr<SampleData> loadWav (const std::string& path, int root)
+{
+    auto d = readFile (path);
+    if (d.size() < 44 || std::string (d.begin(), d.begin() + 4) != "RIFF") return nullptr;
+    size_t pos = 12;
+    int channels = 0, bits = 0, format = 0;
+    uint32_t rate = 0;
+    auto u16 = [&] (size_t p) { return (uint32_t) d[p] | ((uint32_t) d[p + 1] << 8); };
+    auto u32 = [&] (size_t p) { return u16 (p) | (u16 (p + 2) << 16); };
+    auto out = std::make_shared<SampleData>();
+    while (pos + 8 <= d.size())
+    {
+        std::string id (d.begin() + (long) pos, d.begin() + (long) pos + 4);
+        uint32_t len = u32 (pos + 4);
+        size_t body = pos + 8;
+        if (id == "fmt ")
+        {
+            format = (int) u16 (body);
+            channels = (int) u16 (body + 2);
+            rate = u32 (body + 4);
+            bits = (int) u16 (body + 14);
+            if (format == 0xFFFE && len >= 26) format = (int) u16 (body + 24);
+        }
+        else if (id == "data" && channels > 0)
+        {
+            const int bps = bits / 8;
+            const size_t frames = std::min<size_t> (len, d.size() - body) / (size_t) (bps * channels);
+            for (size_t f = 0; f < frames; ++f)
+            {
+                float ch[2] = { 0, 0 };
+                for (int c = 0; c < channels && c < 2; ++c)
+                {
+                    size_t p = body + (f * (size_t) channels + (size_t) c) * (size_t) bps;
+                    float v = 0;
+                    if (format == 3 && bits == 32) { uint32_t u = u32 (p); std::memcpy (&v, &u, 4); }
+                    else if (bits == 16) v = (int16_t) u16 (p) / 32768.0f;
+                    else if (bits == 24) { int32_t x = (int32_t) ((u32 (p) & 0xFFFFFF) << 8) >> 8; v = x / 8388608.0f; }
+                    else if (bits == 32) v = (int32_t) u32 (p) / 2147483648.0f;
+                    ch[c] = v;
+                }
+                out->left.push_back (ch[0]);
+                out->right.push_back (channels > 1 ? ch[1] : ch[0]);
+            }
+        }
+        pos = body + len + (len & 1);
+    }
+    if (out->left.size() < 64) return nullptr;
+    out->sampleRate = rate;
+    out->rootNote = root;
+    // sustain loop over the steady part of the sound (RMS >= 70 % of max), crossfaded
+    const size_t n = out->left.size(), win = (size_t) (rate * 0.05);
+    std::vector<float> env;
+    for (size_t i = 0; i + win <= n; i += win)
+    {
+        double e = 0;
+        for (size_t k = i; k < i + win; ++k) e += out->left[k] * out->left[k];
+        env.push_back ((float) std::sqrt (e / (double) win));
+    }
+    float peak = 0;
+    for (float e : env) peak = std::max (peak, e);
+    size_t a = env.size(), b = 0;
+    for (size_t i = 0; i < env.size(); ++i)
+        if (env[i] >= 0.7f * peak) { a = std::min (a, i); b = i; }
+    if (b > a + 6)
+    {
+        size_t ls = (a + (b - a) / 4) * win, le = b * win;
+        const size_t xf = std::min<size_t> ((size_t) (rate * 0.04), ls);
+        for (size_t i = 0; i < xf; ++i)
+        {
+            float t = (float) i / (float) xf;
+            out->left[le - xf + i] = out->left[le - xf + i] * (1 - t) + out->left[ls - xf + i] * t;
+            out->right[le - xf + i] = out->right[le - xf + i] * (1 - t) + out->right[ls - xf + i] * t;
+        }
+        out->loopStart = (int) ls;
+        out->loopEnd = (int) le;
+    }
+    std::printf ("sample %s: %zu frames @ %u Hz, root %d, loop %d..%d\n", path.c_str(), n, rate, root, out->loopStart, out->loopEnd);
+    return out;
+}
 
 static void renderSong (const Song& song, const std::string& path, double bpm, int loops, uint32_t layerMask = 0xFFFFFFFFu)
 {
@@ -106,6 +193,8 @@ static void renderSong (const Song& song, const std::string& path, double bpm, i
     PreviewSynth synth;
     synth.prepare (sr);
     synth.setHeavy (g_heavy);
+    for (auto& kv : g_samples) synth.setLayerSample (kv.first, kv.second);
+    for (auto& kv : g_gains) synth.setLayerGain (kv.first, kv.second);
     player.setSong (std::make_shared<const Song> (song));
     const double ticksPerSample = bpm / 60.0 * PPQ / sr;
     const int total = (int) std::ceil (song.totalTicks * loops / ticksPerSample) + sr;
@@ -186,8 +275,18 @@ int main (int argc, char** argv)
     {
         // te_cli make out/base [settings...] -> base.mid (all layers) + base.wav, loops twice
         Settings s = parseSettings (argc, argv, 3);
+        std::map<int, std::string> samplePaths;
+        std::map<int, int> roots;
         for (int i = 3; i + 1 < argc; i += 2)
-            if (std::string (argv[i]) == "heavy") g_heavy = std::atoi (argv[i + 1]) != 0;
+        {
+            std::string k = argv[i];
+            if (k == "heavy") g_heavy = std::atoi (argv[i + 1]) != 0;
+            else if (k.rfind ("sample", 0) == 0) samplePaths[std::atoi (k.c_str() + 6)] = argv[i + 1];
+            else if (k.rfind ("root", 0) == 0) roots[std::atoi (k.c_str() + 4)] = std::atoi (argv[i + 1]);
+            else if (k.rfind ("gain", 0) == 0) g_gains[std::atoi (k.c_str() + 4)] = (float) std::atof (argv[i + 1]);
+        }
+        for (auto& kv : samplePaths)
+            if (auto smp = loadWav (kv.second, roots.count (kv.first) ? roots[kv.first] : 60)) g_samples[kv.first] = smp;
         Song song = generate (s);
         std::string base = argv[2];
         writeFile (base + ".mid", writeMidi (songTracks (song, "TE"), song.bpm));
