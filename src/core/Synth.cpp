@@ -206,7 +206,7 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                     advance (v.phase[0], f * invSr);
                     out = (float) std::sin (2 * kPi * v.phase[0]) * (float) std::exp (-t * 5.5)
                         + noise (v) * (float) std::exp (-t * 320.0) * 0.25f;
-                    out = std::tanh (1.6f * out);
+                    out = std::tanh ((heavy ? 3.2f : 1.6f) * out);
                     if (t > 0.6) v.active = false;
                     break;
                 }
@@ -411,7 +411,12 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                     side = lp2;
                 }
             }
-            if (c.drive > 1.0f) sig = std::tanh (sig * c.drive) / std::tanh (c.drive);
+            {
+                float drive = c.drive;
+                if (heavy && (v.layer == (int) Layer::BassA || v.layer == (int) Layer::BassB)) drive *= 2.6f;
+                if (heavy && (v.layer == (int) Layer::Chords || v.layer == (int) Layer::Lead)) drive = 3.0f;
+                if (drive > 1.0f) sig = std::tanh (sig * drive) / std::tanh (drive);
+            }
             float amp = v.env * velAmp * c.gain;
             if (c.wave == 3)
             {
@@ -438,8 +443,9 @@ void PreviewSynth::render (float* L, float* R, int n)
             renderVoice (v, L, R, n);
     for (int i = 0; i < n; ++i)
     {
-        L[i] = std::tanh (L[i] * 0.9f) * 0.9f;
-        R[i] = std::tanh (R[i] * 0.9f) * 0.9f;
+        const float m = heavy ? 1.5f : 0.9f;
+        L[i] = std::tanh (L[i] * m) * 0.9f;
+        R[i] = std::tanh (R[i] * m) * 0.9f;
     }
 }
 

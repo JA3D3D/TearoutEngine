@@ -473,6 +473,10 @@ void splitAB (const Ctx& c, const std::vector<GN>& line, int bPattern, bool aOn,
         case BSwap:
         {
             // alternate on the pattern's own hits; movement re-strikes stay on the sound they split from
+            // (a bar with a single hit, like a long hold, swaps sound bar by bar instead)
+            std::vector<int> hitsInBar ((size_t) c.bars + 1, 0);
+            for (auto& n : work)
+                if (n.kind == KBase) hitsInBar[(size_t) std::min (c.bars, n.start / BAR)]++;
             int lastBar = -1, k = 0;
             bool toA = true;
             for (auto& n : work)
@@ -482,20 +486,26 @@ void splitAB (const Ctx& c, const std::vector<GN>& line, int bPattern, bool aOn,
                     int bar = n.start / BAR;
                     if (bar != lastBar) { lastBar = bar; k = 0; }
                     else ++k;
-                    toA = (k % 2) == 0;
+                    toA = hitsInBar[(size_t) std::min (c.bars, bar)] <= 1 ? (bar % 2 == 0) : (k % 2) == 0;
                 }
                 (toA ? outA : outB).push_back (n);
             }
             break;
         }
         case BRestrikes:
+        {
+            // A keeps the head of each bar / chord (its first pattern hit), B takes every other hit
+            int lastBar = -1;
             for (auto& n : work)
             {
                 const auto& ev = c.chordAt (n.start);
-                bool head = (n.start % BAR == 0) || n.start == ev.start;
+                const int bar = n.start / BAR;
+                bool head = n.kind == KBase && (bar != lastBar || n.start == ev.start);
+                if (n.kind == KBase && bar != lastBar) lastBar = bar;
                 (head ? outA : outB).push_back (n);
             }
             break;
+        }
         case BHalfBar:
             splitAt (192, [] (int) { return true; });
             for (auto& n : work)

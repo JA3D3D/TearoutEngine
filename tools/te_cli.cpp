@@ -97,12 +97,15 @@ static void writeWav (const std::string& path, const std::vector<float>& L, cons
     writeFile (path, d);
 }
 
+static bool g_heavy = false;
+
 static void renderSong (const Song& song, const std::string& path, double bpm, int loops, uint32_t layerMask = 0xFFFFFFFFu)
 {
     const int sr = 44100;
     SongPlayer player;
     PreviewSynth synth;
     synth.prepare (sr);
+    synth.setHeavy (g_heavy);
     player.setSong (std::make_shared<const Song> (song));
     const double ticksPerSample = bpm / 60.0 * PPQ / sr;
     const int total = (int) std::ceil (song.totalTicks * loops / ticksPerSample) + sr;
@@ -177,6 +180,23 @@ int main (int argc, char** argv)
             }
             std::printf ("%s  (%s)\n", file.c_str(), song.chordNames.c_str());
         }
+        return 0;
+    }
+    if (cmd == "make" && argc >= 3)
+    {
+        // te_cli make out/base [settings...] -> base.mid (all layers) + base.wav, loops twice
+        Settings s = parseSettings (argc, argv, 3);
+        for (int i = 3; i + 1 < argc; i += 2)
+            if (std::string (argv[i]) == "heavy") g_heavy = std::atoi (argv[i + 1]) != 0;
+        Song song = generate (s);
+        std::string base = argv[2];
+        writeFile (base + ".mid", writeMidi (songTracks (song, "TE"), song.bpm));
+        renderSong (song, base + ".wav", song.bpm, 2);
+        std::printf ("%s | %s %s | %s | %d bars\n", genreProfile (s.genre).name, keyName (song.keyRoot, song.mode).c_str(),
+                     song.progressionLabel.c_str(), song.chordNames.c_str(), song.bars);
+        for (int l = 0; l < kNumLayers; ++l)
+            std::printf ("  %-7s %s (%zu notes)\n", layerName ((Layer) l), patternsFor ((Layer) l)[(size_t) song.pattern[(size_t) l]].name,
+                         song.layers[(size_t) l].size());
         return 0;
     }
     if (cmd == "render" && argc >= 3)

@@ -22,6 +22,8 @@ public:
     void allNotesOff (bool hard);
     // Adds into L / R.
     void render (float* L, float* R, int numSamples);
+    // Heavier preview: more distortion on basses, chords and kick (used by the CLI renders).
+    void setHeavy (bool h) noexcept { heavy = h; }
 
 private:
     struct Voice
@@ -58,6 +60,7 @@ private:
     void svf (float x, float g, float k, float& ic1, float& ic2, float& lp, float& bp);
 
     double sr = 44100.0;
+    bool heavy = false;
     std::array<Voice, kMaxVoices> voices {};
     uint64_t counter = 0;
     std::array<int, kNumLayers> monoVoice {};
