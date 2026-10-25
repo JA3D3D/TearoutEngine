@@ -1,0 +1,132 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  engine-tests:
+    name: Engine tests + example MIDI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build engine
+        run: |
+          cmake -S . -B build-tests -DTE_BUILD_PLUGIN=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-tests --parallel
+      - name: Run engine tests
+        run: ./build-tests/te_tests
+      - name: Write example drops
+        run: |
+          mkdir -p examples
+          ./build-tests/te_cli examples examples
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TEAROUT_ENGINE_example_midi
+          path: examples/*.mid
+
+  linux-plugin:
+    name: Linux plugin build + processor tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev xvfb
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Processor tests
+        run: xvfb-run -a build/te_plugin_tests_artefacts/Release/te_plugin_tests
+      - name: GUI snapshot
+        run: xvfb-run -a build/te_snapshot_artefacts/Release/te_snapshot snapshot.png 2 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TEAROUT_ENGINE_snapshot
+          path: snapshot.png
+
+  macos:
+    name: macOS VST3 / AU / Standalone (universal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTE_BUILD_TESTS=OFF
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target TearoutEngine_VST3 TearoutEngine_AU TearoutEngine_Standalone
+      - name: Ad-hoc sign
+        run: |
+          A="build/TearoutEngine_artefacts/Release"
+          codesign --force --deep --sign - "$A/VST3/TEAROUT ENGINE.vst3"
+          codesign --force --deep --sign - "$A/AU/TEAROUT ENGINE.component"
+          codesign --force --deep --sign - "$A/Standalone/TEAROUT ENGINE.app"
+      - name: Validate the Audio Unit
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/TearoutEngine_artefacts/Release/AU/TEAROUT ENGINE.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 2
+          auval -v aumu Te10 Trot
+      - name: Package
+        run: |
+          A="build/TearoutEngine_artefacts/Release"
+          D="dist/TEAROUT_ENGINE_macOS"
+          mkdir -p "$D"
+          cp -R "$A/VST3/TEAROUT ENGINE.vst3" "$D/"
+          cp -R "$A/AU/TEAROUT ENGINE.component" "$D/"
+          cp -R "$A/Standalone/TEAROUT ENGINE.app" "$D/"
+          cp docs/INSTALL_MAC.md "$D/"
+          cd dist && ditto -c -k --keepParent TEAROUT_ENGINE_macOS TEAROUT_ENGINE_macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TEAROUT_ENGINE_macOS
+          path: dist/TEAROUT_ENGINE_macOS.zip
+
+  windows:
+    name: Windows VST3 / Standalone
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DTE_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target TearoutEngine_VST3 TearoutEngine_Standalone
+      - name: Package
+        shell: pwsh
+        run: |
+          $A = "build/TearoutEngine_artefacts/Release"
+          New-Item -ItemType Directory -Force -Path dist/TEAROUT_ENGINE_Windows | Out-Null
+          Copy-Item -Recurse "$A/VST3/TEAROUT ENGINE.vst3" dist/TEAROUT_ENGINE_Windows/
+          Copy-Item "$A/Standalone/TEAROUT ENGINE.exe" dist/TEAROUT_ENGINE_Windows/
+          Compress-Archive -Path dist/TEAROUT_ENGINE_Windows -DestinationPath dist/TEAROUT_ENGINE_Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TEAROUT_ENGINE_Windows
+          path: dist/TEAROUT_ENGINE_Windows.zip
+
+  release:
+    name: Release (tags only)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ engine-tests, macos, windows ]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/TEAROUT_ENGINE_macOS/*.zip
+            artifacts/TEAROUT_ENGINE_Windows/*.zip
+            artifacts/TEAROUT_ENGINE_example_midi/*.mid
