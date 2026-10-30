@@ -81,10 +81,28 @@ jobs:
           cp -R "$A/Standalone/TEAROUT ENGINE.app" "$D/"
           cp docs/INSTALL_MAC.md "$D/"
           cd dist && ditto -c -k --keepParent TEAROUT_ENGINE_macOS TEAROUT_ENGINE_macOS.zip
+      - name: Build the installer (.pkg)
+        run: |
+          A="build/TearoutEngine_artefacts/Release"
+          R="pkgroot"
+          mkdir -p "$R/Library/Audio/Plug-Ins/VST3" "$R/Library/Audio/Plug-Ins/Components" "$R/Applications" scripts
+          cp -R "$A/VST3/TEAROUT ENGINE.vst3" "$R/Library/Audio/Plug-Ins/VST3/"
+          cp -R "$A/AU/TEAROUT ENGINE.component" "$R/Library/Audio/Plug-Ins/Components/"
+          cp -R "$A/Standalone/TEAROUT ENGINE.app" "$R/Applications/"
+          # install exactly where we say, never "relocate" to an older copy elsewhere on disk
+          pkgbuild --analyze --root "$R" components.plist
+          python3 -c "import plistlib; p='components.plist'; d=plistlib.load(open(p,'rb')); [c.__setitem__('BundleIsRelocatable', False) for c in d]; plistlib.dump(d, open(p,'wb'))"
+          # refresh Logic/Live's Audio Unit cache after installing
+          printf '#!/bin/sh\nkillall -9 AudioComponentRegistrar >/dev/null 2>&1 || true\nexit 0\n' > scripts/postinstall
+          chmod +x scripts/postinstall
+          pkgbuild --root "$R" --component-plist components.plist --scripts scripts \
+            --identifier com.tearout.engine.pkg --version 1.0.0 --install-location / dist/TEAROUT_ENGINE_1.0_macOS.pkg
       - uses: actions/upload-artifact@v4
         with:
           name: TEAROUT_ENGINE_macOS
-          path: dist/TEAROUT_ENGINE_macOS.zip
+          path: |
+            dist/TEAROUT_ENGINE_macOS.zip
+            dist/TEAROUT_ENGINE_1.0_macOS.pkg
       - name: Validate the Audio Unit (auval)
         continue-on-error: true
         run: |
@@ -129,5 +147,6 @@ jobs:
         with:
           files: |
             artifacts/TEAROUT_ENGINE_macOS/*.zip
+            artifacts/TEAROUT_ENGINE_macOS/*.pkg
             artifacts/TEAROUT_ENGINE_Windows/*.zip
             artifacts/TEAROUT_ENGINE_example_midi/*.mid
