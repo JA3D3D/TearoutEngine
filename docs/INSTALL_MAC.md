@@ -1,5 +1,18 @@
 # Installing TEAROUT ENGINE on a Mac (Ableton Live 11)
 
+## Easiest: the installer (.pkg)
+
+1. Double-click `TEAROUT_ENGINE_1.0_macOS.pkg`. It puts:
+   - the VST3 in `/Library/Audio/Plug-Ins/VST3`
+   - the AU in `/Library/Audio/Plug-Ins/Components`
+   - the app in `/Applications`
+2. The installer isn't notarized by Apple, so macOS may refuse to open it the first time. Either:
+   - right-click it and choose **Open**, then confirm, or
+   - go to **System Settings → Privacy & Security** and click **Open Anyway**.
+3. In Live 11, go to **Preferences → Plug-Ins**. Turn on **Use Audio Units** and/or **Use VST3 Plug-In System Folders**, then **Rescan**.
+
+## Manual install (from the zip)
+
 1. Unzip `TEAROUT_ENGINE_macOS.zip`.
 2. Copy the plugins into your plug-in folders. In Finder, use *Go → Go to Folder…*:
    - `TEAROUT ENGINE.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
