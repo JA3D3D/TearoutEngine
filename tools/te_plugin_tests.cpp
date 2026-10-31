@@ -244,10 +244,9 @@ int main()
         std::printf ("  %s\n", msg.toRawUTF8());
         CHECK (p.getSound ((int) te::Layer::BassA).root == 25, "root detected from the audio (C#0)");
         CHECK (p.getSound ((int) te::Layer::BassA).file.isAChildOf (tep::TearoutProcessor::soundsFolder()), "sound copied into the sounds folder");
-        CHECK (p.soundFileForDrag ((int) te::Layer::BassA).existsAsFile(), "SOUND drag file exists");
         CHECK (! p.loadLayerSound ((int) te::Layer::Drums, tone, msg), "drums don't take a sound");
 
-        // Simpler-ready MIDI: shifted so Simpler's C3 root plays the right pitch
+        // MIDI is always at true pitch (the instrument's Simpler carries the root)
         auto readNotes = [] (const File& f) {
             MemoryBlock mb;
             f.loadFileAsData (mb);
@@ -260,12 +259,79 @@ int main()
             return n;
         };
         auto songNotes = p.getSong()->layers[(size_t) te::Layer::BassA];
-        auto shifted = readNotes (p.writeLayerMidi ((int) te::Layer::BassA));
-        CHECK (! shifted.empty() && shifted.size() == songNotes.size() && shifted[0].pitch == songNotes[0].pitch + 35, "Simpler-ready MIDI is shifted by (C3 - root)");
-        p.setSimplerMidi ((int) te::Layer::BassA, false);
-        auto plain = readNotes (p.writeLayerMidi ((int) te::Layer::BassA));
-        CHECK (! plain.empty() && plain[0].pitch == songNotes[0].pitch, "Simpler-ready off = true pitches");
-        p.setSimplerMidi ((int) te::Layer::BassA, true);
+        std::sort (songNotes.begin(), songNotes.end(), [] (const te::Note& a, const te::Note& c) { return a.start != c.start ? a.start < c.start : a.pitch < c.pitch; });
+        auto dragged = readNotes (p.writeLayerMidi ((int) te::Layer::BassA));
+        bool same = ! dragged.empty() && dragged.size() == songNotes.size();
+        for (size_t i = 0; same && i < dragged.size(); ++i) same = dragged[i].pitch == songNotes[i].pitch;
+        CHECK (same, "dragged MIDI is at true pitch with a sound loaded");
+
+        // ---- 1.2: DRAG INSTRUMENT ----
+        auto readPreset = [] (const File& f) -> std::unique_ptr<XmlElement> {
+            MemoryBlock mb;
+            if (! f.loadFileAsData (mb) || mb.getSize() < 4) return nullptr;
+            auto* b = (const uint8_t*) mb.getData();
+            if (b[0] != 0x1f || b[1] != 0x8b) return nullptr; // Live wants gzip
+            MemoryInputStream raw (mb, false);
+            GZIPDecompressorInputStream gz (&raw, false, GZIPDecompressorInputStream::gzipFormat);
+            return XmlDocument::parse (gz.readEntireStreamAsString());
+        };
+        std::function<XmlElement* (XmlElement*, const String&)> deep = [&] (XmlElement* e, const String& name) -> XmlElement* {
+            if (! e) return nullptr;
+            if (e->hasTagName (name)) return e;
+            for (auto* c : e->getChildIterator())
+                if (auto* r = deep (c, name)) return r;
+            return nullptr;
+        };
+        auto val = [&] (XmlElement* e, const String& name) { auto* c = deep (e, name); return c ? c->getStringAttribute ("Value") : String ("<missing>"); };
+        auto manual = [&] (XmlElement* e, const String& name) { auto* c = deep (deep (e, name), "Manual"); return c ? c->getStringAttribute ("Value") : String ("<missing>"); };
+
+        auto inst = p.exportInstrument ((int) te::Layer::BassA);
+        std::printf ("  %s\n", inst.message.toRawUTF8());
+        CHECK (inst.preset.existsAsFile() && inst.preset.hasFileExtension ("adv") && inst.wav.existsAsFile(), "instrument writes an .adv preset and a WAV");
+        CHECK (inst.preset.isAChildOf (tep::TearoutProcessor::instrumentsFolder()), "instrument kept in the Instruments folder");
+        auto xml = readPreset (inst.preset);
+        CHECK (xml != nullptr && xml->hasTagName ("Ableton") && deep (xml.get(), "OriginalSimpler") != nullptr, "preset is a gzip Simpler preset");
+        if (xml)
+        {
+            CHECK (xml->getStringAttribute ("MinorVersion").startsWith ("11."), "preset is tagged for Live 11");
+            CHECK (val (xml.get(), "RootKey") == "25", "Simpler root = the sound's root");
+            auto* fileRef = deep (deep (xml.get(), "SampleRef"), "FileRef");
+            CHECK (val (fileRef, "Path") == inst.wav.getFullPathName(), "preset points at the WAV");
+            CHECK (val (fileRef, "OriginalFileSize") == String (inst.wav.getSize()), "preset has the WAV's size");
+            CHECK (val (xml.get(), "NumVoices") == "0" && manual (xml.get(), "PortamentoMode") == "1", "bass is mono with glide");
+            CHECK (val (deep (xml.get(), "SustainLoop"), "Mode") == "1", "sustain loop on");
+            CHECK (xml->toString().indexOf ("@@") < 0, "no template markers");
+        }
+        {
+            AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<AudioFormatReader> r (fm.createReaderFor (inst.wav));
+            CHECK (r && r->numChannels == 2 && r->bitsPerSample == 24, "instrument WAV is 24-bit stereo");
+            if (r && xml)
+            {
+                CHECK (String (r->lengthInSamples) == val (xml.get(), "DefaultDuration"), "WAV length matches the preset");
+                CHECK (r->metadataValues.getValue ("MidiUnityNote", "") == "25", "WAV smpl chunk has the root");
+                CHECK (r->metadataValues.getValue ("NumSampleLoops", "0") == "1", "WAV smpl chunk has the loop");
+            }
+        }
+        auto again = p.exportInstrument ((int) te::Layer::BassA);
+        CHECK (again.wav == inst.wav && again.preset == inst.preset, "exporting the same sound reuses its files");
+        p.nudgeRoot ((int) te::Layer::BassA, 1);
+        auto nudged = p.exportInstrument ((int) te::Layer::BassA);
+        auto nx = readPreset (nudged.preset);
+        CHECK (nx && val (nx.get(), "RootKey") == "26" && nudged.wav.existsAsFile(), "root nudge updates the preset");
+        CHECK (nudged.wav != inst.wav && inst.wav.existsAsFile(), "a changed sound never overwrites a WAV a Set may use");
+        p.nudgeRoot ((int) te::Layer::BassA, -1);
+
+        auto chords = p.exportInstrument ((int) te::Layer::Chords); // no sound loaded: the built-in voice
+        auto cx = readPreset (chords.preset);
+        CHECK (chords.wav.existsAsFile() && cx && val (cx.get(), "RootKey") == "60" && val (cx.get(), "NumVoices") == "7"
+               && manual (cx.get(), "PortamentoMode") == "0", "built-in chords voice exports as a poly Simpler");
+        CHECK (chords.wav.getFileName().contains ("Built-in"), "built-in voice is named");
+        auto drums = p.exportInstrument ((int) te::Layer::Drums);
+        CHECK (! drums.preset.existsAsFile() && drums.message.isNotEmpty(), "drums have no instrument");
+        for (auto* f : { &inst.preset, &inst.wav, &nudged.preset, &nudged.wav, &chords.preset, &chords.wav }) f->deleteFile();
+
         p.nudgeRoot ((int) te::Layer::BassA, 1);
         CHECK (p.getSound ((int) te::Layer::BassA).root == 26, "root nudge");
         p.nudgeRoot ((int) te::Layer::BassA, -1);
@@ -282,7 +348,7 @@ int main()
         q.setStateInformation (state.getData(), (int) state.getSize());
         CHECK (q.getSound ((int) te::Layer::BassA).data != nullptr && q.getSound ((int) te::Layer::BassA).root == 25, "sound + root survive save/load");
         q.clearLayerSound ((int) te::Layer::BassA);
-        CHECK (q.getSound ((int) te::Layer::BassA).data == nullptr && ! q.soundFileForDrag ((int) te::Layer::BassA).existsAsFile(), "sound cleared");
+        CHECK (q.getSound ((int) te::Layer::BassA).data == nullptr, "sound cleared");
         tone.deleteFile();
     }
 

@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  TE_VERSION: 1.1.0
+  TE_VERSION: 1.2.0
 
 jobs:
   engine-tests:
@@ -156,13 +156,16 @@ jobs:
           name: TEAROUT ENGINE ${{ env.TE_VERSION }}
           make_latest: true
           body: |
-            **What's new in 1.1**
-            - **Sound slots:** drop your own WAV / AIFF on any pitched layer (or LOAD it). The preview plays your sound; the root note is detected from the audio. Drag **SOUND** onto an empty MIDI track (Live makes a Simpler), then drag **MIDI** onto the same track: it plays in tune ("Simpler-ready MIDI").
-            - **PLAY / STOP** silences the plugin completely, even while Live plays. **FOLLOW LIVE** locks it to Live's transport (or lets it loop on its own).
-            - **ON / OFF** per layer, and the sound stops the moment you switch a layer off.
-            - **GENERATE** now makes a completely new drop: new progression (on Auto), new patterns for every layer set to "Genre", new hook and groove. VARIATION still only moves the groove.
-            - **MIDI OUT** can send one chosen layer (VST3) to drive Serum on another track.
-            - Sets saved with 1.0 open exactly as they were.
+            **What's new in 1.2: DRAG INSTRUMENT**
+            - Every pitched layer has an **INSTRUMENT** handle next to **MIDI**. Drag it onto an empty spot in Live and you get a new MIDI track with a **Simpler** set up like the preview:
+              - your loaded sound, or the built-in preview voice if you didn't load one
+              - the right root note and sustain loop
+              - one voice + glide for sub, basses and lead; chords and arp stay polyphonic
+              - the preview's envelope and level
+            - Then drag **MIDI** onto that track and it sounds like TEAROUT.
+            - Dragged MIDI is now always at the real pitches. The "Simpler-ready MIDI" switch is gone, because the instrument carries the root.
+            - Hold **Alt / Option** while dragging INSTRUMENT to get just the WAV, with its root and loop embedded.
+            - Everything from 1.1 is still here: sound slots, PLAY / STOP, layer ON / OFF, new-drop GENERATE, and per-layer MIDI OUT. Sets from 1.0 and 1.1 open as they were.
 
             **Mac:** quit Live, then install `TEAROUT_ENGINE_${{ env.TE_VERSION }}_macOS.pkg` (double-click, or `sudo installer -pkg ~/Downloads/TEAROUT_ENGINE_${{ env.TE_VERSION }}_macOS.pkg -target /`). It installs the VST3, the AU and the standalone app (Apple Silicon + Intel) over the previous version.
             The installer isn't notarized: if macOS blocks it, right-click it, choose **Open**, or use System Settings → Privacy & Security → **Open Anyway**.

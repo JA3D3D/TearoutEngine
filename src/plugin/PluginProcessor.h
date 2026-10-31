@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../core/Engine.h"
+#include "../core/Instrument.h"
 #include "../core/MidiFile.h"
 #include "../core/Sample.h"
 #include "../core/Synth.h"
@@ -83,7 +84,6 @@ public:
         juce::File file;              // our copy, kept in the TEAROUT ENGINE sounds folder
         int root = 60;                // MIDI note the sample was recorded at
         juce::String rootInfo;        // "detected C0 (32.7 Hz)"
-        bool simplerMidi = true;      // dragged MIDI is transposed for Simpler's default root (C3)
         std::shared_ptr<const te::SampleData> data;
     };
     static bool layerTakesSound (int layer);
@@ -92,9 +92,15 @@ public:
     bool loadLayerSound (int layer, const juce::File& file, juce::String& message);
     void clearLayerSound (int layer);
     void nudgeRoot (int layer, int semitones);
-    void setSimplerMidi (int layer, bool on);
     const SoundSlot& getSound (int layer) const { return sounds[(size_t) juce::jlimit (0, te::kNumLayers - 1, layer)]; }
-    juce::File soundFileForDrag (int layer) const;
+
+    // ---- DRAG INSTRUMENT (1.2): a layer's sound as an Ableton Simpler preset ---------------------------------
+    // The loaded sound (or the built-in voice, rendered) is written as a WAV with its root and sustain loop, plus an
+    // .adv Simpler preset with the preview's voices / glide / envelope. Dragged MIDI is always at true pitch, so it
+    // plays in tune on that Simpler (and on Serum or any other synth).
+    struct InstrumentFiles { juce::File preset, wav; juce::String message; };
+    InstrumentFiles exportInstrument (int layer) const;   // message thread
+    static juce::File instrumentsFolder();
 
     // ---- playback ----------------------------------------------------------------------------------------
     // PLAY is the master switch for the preview sound. With FOLLOW LIVE on it locks to Live's transport

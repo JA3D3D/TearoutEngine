@@ -2,6 +2,9 @@
 
 #include "PluginEditor.h"
 
+#include <cmath>
+#include <unordered_map>
+
 namespace tep
 {
 using namespace juce;
@@ -315,15 +318,126 @@ void TearoutProcessor::nudgeRoot (int layer, int semitones)
     publishSound (layer, copy);
 }
 
-void TearoutProcessor::setSimplerMidi (int layer, bool on)
+// ---- DRAG INSTRUMENT ------------------------------------------------------------------------------------
+File TearoutProcessor::instrumentsFolder()
 {
-    if (layer >= 0 && layer < te::kNumLayers) sounds[(size_t) layer].simplerMidi = on;
+    return soundsFolder().getChildFile ("Instruments");
 }
 
-File TearoutProcessor::soundFileForDrag (int layer) const
+static MemoryBlock instrumentWav (const te::InstrumentAudio& a, double sr, int root, int loopStart, int loopEnd)
 {
-    const auto& slot = getSound (layer);
-    return slot.data && slot.file.existsAsFile() ? slot.file : File();
+    MemoryBlock bytes;
+    std::unordered_map<String, String> meta;
+    // smpl chunk: root and loop for samplers that read it (Live's Sampler, Kontakt, ...)
+    meta["MidiUnityNote"] = String (root);
+    meta["SamplePeriod"] = String ((int) std::lround (1.0e9 / sr));
+    if (loopEnd > loopStart && loopStart >= 0)
+    {
+        meta["NumSampleLoops"] = "1";
+        meta["Loop0Type"] = "0";
+        meta["Loop0Start"] = String (loopStart);
+        meta["Loop0End"] = String (loopEnd - 1);
+    }
+    std::unique_ptr<OutputStream> stream = std::make_unique<MemoryOutputStream> (bytes, false);
+    WavAudioFormat wav;
+    auto writer = wav.createWriterFor (stream, AudioFormatWriterOptions{}
+                                                   .withSampleRate (sr)
+                                                   .withNumChannels (2)
+                                                   .withBitsPerSample (24)
+                                                   .withMetadataValues (meta));
+    if (! writer) return {};
+    const float* chans[] = { a.left.data(), a.right.data() };
+    writer->writeFromFloatArrays (chans, 2, (int) a.left.size());
+    writer.reset(); // flushes the header into `bytes`
+    return bytes;
+}
+
+TearoutProcessor::InstrumentFiles TearoutProcessor::exportInstrument (int layer) const
+{
+    InstrumentFiles out;
+    if (! layerTakesSound (layer))
+    {
+        out.message = "Drums and FX have no instrument to drag. Pick a pitched layer.";
+        return out;
+    }
+    const auto& slot = sounds[(size_t) layer];
+    std::shared_ptr<const te::SampleData> data = slot.data;
+    const bool user = data != nullptr;
+    if (! user) data = te::renderLayerVoice ((te::Layer) layer, 44100.0);
+    if (! data || data->left.size() < 64)
+    {
+        out.message = "Couldn't make the instrument's sample.";
+        return out;
+    }
+    const auto audio = te::instrumentAudio (*data, user);
+    const int frames = (int) audio.left.size();
+    const bool looped = data->loopEnd > data->loopStart && data->loopStart >= 0 && data->loopEnd <= frames;
+    const int loopStart = looped ? data->loopStart : -1, loopEnd = looped ? data->loopEnd : -1;
+    const auto wavBytes = instrumentWav (audio, data->sampleRate, data->rootNote, loopStart, loopEnd);
+    if (wavBytes.isEmpty())
+    {
+        out.message = "Couldn't write the instrument's WAV.";
+        return out;
+    }
+
+    const String layerTitle = String (te::layerName ((te::Layer) layer)).toUpperCase();
+    const String soundName = user ? slot.file.getFileNameWithoutExtension() : String ("Built-in");
+    const String base = File::createLegalFileName ("TEAROUT " + layerTitle + " - " + soundName);
+    auto dir = instrumentsFolder();
+    dir.createDirectory();
+
+    // never overwrite a WAV a Live Set may already use: reuse it if identical, otherwise pick a new name
+    String name;
+    File wavFile;
+    for (int i = 1; i < 1000; ++i)
+    {
+        name = i == 1 ? base : base + " (" + String (i) + ")";
+        wavFile = dir.getChildFile (name + ".wav");
+        if (! wavFile.existsAsFile())
+        {
+            if (! wavFile.replaceWithData (wavBytes.getData(), wavBytes.getSize()))
+            {
+                out.message = "Couldn't write " + wavFile.getFullPathName();
+                return out;
+            }
+            break;
+        }
+        MemoryBlock existing;
+        if (wavFile.getSize() == (int64) wavBytes.getSize() && wavFile.loadFileAsData (existing) && existing == wavBytes)
+            break;
+    }
+
+    auto spec = te::instrumentDefaults ((te::Layer) layer, user);
+    spec.userName = ("TEAROUT " + layerTitle).toStdString();
+    spec.sampleName = name.toStdString();
+    spec.wavPath = wavFile.getFullPathName().toStdString();
+    spec.fileSize = (uint64_t) wavFile.getSize();
+    spec.frames = frames;
+    spec.sampleRate = data->sampleRate;
+    spec.rootNote = data->rootNote;
+    spec.loopStart = loopStart;
+    spec.loopEnd = loopEnd;
+    spec.volumeDb = audio.volumeDb;
+    const auto xml = te::makeSimplerPresetXml (spec);
+
+    MemoryBlock adv;
+    {
+        MemoryOutputStream mo (adv, false);
+        GZIPCompressorOutputStream gz (mo, 9, GZIPCompressorOutputStream::windowBitsGZIP);
+        gz.write (xml.data(), xml.size());
+        gz.flush();
+    }
+    auto preset = dir.getChildFile (name + ".adv");
+    if (! preset.replaceWithData (adv.getData(), adv.getSize()))
+    {
+        out.message = "Couldn't write " + preset.getFullPathName();
+        return out;
+    }
+    out.preset = preset;
+    out.wav = wavFile;
+    out.message = "Simpler preset '" + name + "' (root " + noteText (data->rootNote) + (looped ? ", sustain loop" : "")
+                + (spec.glide ? ", mono + glide" : "") + ")";
+    return out;
 }
 
 // ---- seed ---------------------------------------------------------------------------------------------
@@ -553,29 +667,13 @@ String TearoutProcessor::fileStem() const
     return "TEAROUT_" + String (g.shortName) + "_" + key + "_" + String (s->bars) + "bars";
 }
 
-// A layer with a sound gets "Simpler-ready" MIDI: shifted so Simpler's default root (C3) plays the right pitch
-// when the dragged sound is dropped on the same track.
-static std::vector<te::MidiTrackOut> tracksFor (const te::Song& s, int layer,
-                                                const std::array<TearoutProcessor::SoundSlot, te::kNumLayers>& sounds)
+// MIDI is always at true pitch: DRAG INSTRUMENT sets Simpler's root key to the sound's root.
+static std::vector<te::MidiTrackOut> tracksFor (const te::Song& s, int layer)
 {
     std::vector<te::MidiTrackOut> t;
     for (int l = 0; l < te::kNumLayers; ++l)
         if ((layer < 0 || layer == l) && ! s.layers[(size_t) l].empty())
-        {
-            auto notes = s.layers[(size_t) l];
-            const auto& slot = sounds[(size_t) l];
-            if (slot.data && slot.simplerMidi)
-            {
-                const int shift = 60 - slot.root;
-                for (auto& n : notes)
-                {
-                    n.pitch += shift;
-                    while (n.pitch > 127) n.pitch -= 12;
-                    while (n.pitch < 0) n.pitch += 12;
-                }
-            }
-            t.push_back ({ std::string ("TE ") + kLayerTitles[l], notes, 0 });
-        }
+            t.push_back ({ std::string ("TE ") + kLayerTitles[l], s.layers[(size_t) l], 0 });
     return t;
 }
 
@@ -589,7 +687,7 @@ File TearoutProcessor::writeLayerMidi (int layer) const
 {
     auto s = song;
     if (! s) return {};
-    auto tracks = tracksFor (*s, layer, sounds);
+    auto tracks = tracksFor (*s, layer);
     if (tracks.empty()) return {};
     auto dir = File::getSpecialLocation (File::tempDirectory).getChildFile ("TEAROUT ENGINE");
     String name = fileStem() + "_" + (layer < 0 ? String ("ALL") : String (kLayerTitles[layer]).replaceCharacter (' ', '-'));
@@ -604,7 +702,7 @@ bool TearoutProcessor::saveAllMidi (const File& folder, String& message) const
     int written = 0;
     for (int l = -1; l < te::kNumLayers; ++l)
     {
-        auto tracks = tracksFor (*s, l, sounds);
+        auto tracks = tracksFor (*s, l);
         if (tracks.empty()) continue;
         String name = fileStem() + "_" + (l < 0 ? String ("ALL") : String (kLayerTitles[l]).replaceCharacter (' ', '-'));
         if (writeBytes (folder.getChildFile (name + ".mid"), te::writeMidi (tracks, s->bpm))) ++written;
@@ -632,7 +730,6 @@ void TearoutProcessor::getStateInformation (MemoryBlock& dest)
         snd.setProperty ("file", slot.file.getFullPathName(), nullptr);
         snd.setProperty ("root", slot.root, nullptr);
         snd.setProperty ("rootInfo", slot.rootInfo, nullptr);
-        snd.setProperty ("simplerMidi", slot.simplerMidi, nullptr);
         extra.appendChild (snd, nullptr);
     }
     if (seed.valid)
@@ -670,8 +767,7 @@ void TearoutProcessor::setStateInformation (const void* data, int size)
             const File f (snd.getProperty ("file").toString());
             if (! layerTakesSound (l) || ! f.existsAsFile()) continue;
             String msg;
-            if (readSound (l, f, (int) snd.getProperty ("root", 60), snd.getProperty ("rootInfo").toString(), msg))
-                sounds[(size_t) l].simplerMidi = (bool) snd.getProperty ("simplerMidi", true);
+            readSound (l, f, (int) snd.getProperty ("root", 60), snd.getProperty ("rootInfo").toString(), msg);
         }
         seed = te::SeedAnalysis {};
         seedSource = {};

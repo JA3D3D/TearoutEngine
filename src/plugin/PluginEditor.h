@@ -66,13 +66,12 @@ private:
     juce::TextButton generateBtn { "GENERATE" }, variationBtn { "VARIATION" }, playBtn { "PREVIEW" },
         captureBtn { "CAPTURE" }, clearSeedBtn { "CLEAR" }, saveBtn { "SAVE .MID" }, allViewBtn { "ALL" },
         followBtn { "FOLLOW LIVE" }, loadSoundBtn { "LOAD" }, clearSoundBtn { "CLEAR" }, rootDownBtn { "-" }, rootUpBtn { "+" };
-    juce::ToggleButton simplerToggle { "Simpler-ready MIDI" };
     Knob volumeKnob { "Preview", col::cyan }, octaveKnob { "Octave", col::cyan }, movementKnob { "Movement", col::cyan },
         lengthKnob { "Length", col::cyan };
     ChordStrip chordStrip;
     PianoRoll roll;
     juce::OwnedArray<LayerRow> rows;
-    DragHandle layerDrag { "DRAG LAYER", col::cyan }, allDrag { "DRAG ALL LAYERS", col::magenta }, soundDrag { "SOUND", col::cyan };
+    DragHandle layerDrag { "DRAG LAYER", col::cyan }, allDrag { "DRAG ALL LAYERS", col::magenta }, instDrag { "INSTRUMENT", col::cyan };
     SeedZone seedZone;
 
     using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
@@ -84,7 +83,7 @@ private:
 
     std::shared_ptr<const te::Song> song;
     bool viewAll = false;
-    juce::String status;
+    juce::String status, instrumentMsg;
     juce::uint32 statusTime = 0;
     float blink = 0.0f;
 

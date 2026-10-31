@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(TEAROUT_ENGINE VERSION 1.1.0 LANGUAGES C CXX)
+project(TEAROUT_ENGINE VERSION 1.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,8 @@ add_library(te_core STATIC
     src/core/Seed.cpp
     src/core/MidiFile.cpp
     src/core/Synth.cpp
-    src/core/Sample.cpp)
+    src/core/Sample.cpp
+    src/core/Instrument.cpp)
 target_include_directories(te_core PUBLIC src/core)
 if(MSVC)
     target_compile_options(te_core PRIVATE /W4 /utf-8)

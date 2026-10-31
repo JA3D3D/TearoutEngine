@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/logo.png" width="560" alt="TEAROUT ENGINE"></p>
 
-# TEAROUT ENGINE 1.1
+# TEAROUT ENGINE 1.2
 
 TEAROUT ENGINE is a MIDI generator plugin (VST3 / AU / Standalone) for building drops. It works out the harmony first, then writes the parts of a drop around it: real chord progressions, sustained basses with no gaps, a hook and an arpeggiator. Each layer comes out as its own MIDI clip that you drag into Ableton.
 
@@ -29,10 +29,16 @@ TEAROUT ENGINE is a MIDI generator plugin (VST3 / AU / Standalone) for building 
 | **DRUMS** | Drum Rack notes: half-time, half-time heavy, trap, four-on-floor, hardstyle or backbeat. |
 | **FX** | Impacts, risers, reverse crashes and sweeps at phrase boundaries. |
 
-**Sound slots (1.1).** Drop your own WAV / AIFF / FLAC / MP3 onto any pitched layer's row, or press **LOAD**. The preview then plays your sound. The root note is detected from the audio, and you can nudge it with **ROOT − / +**.
-- Drag **SOUND** onto an empty MIDI track: Live makes a Simpler holding it.
-- Drag **MIDI** onto the same track. With **Simpler-ready MIDI** on, the clip is shifted to match Simpler's default root (C3), so it plays in tune straight away. Turn it off to get the true pitches for Serum or any other synth.
-- Sounds are copied into the TEAROUT ENGINE sounds folder and saved with your Set.
+**Sound slots (1.1).** Drop your own WAV / AIFF / FLAC / MP3 onto any pitched layer's row, or press **LOAD**. The preview then plays your sound. The root note is detected from the audio, and you can nudge it with **ROOT − / +**. Sounds are copied into the TEAROUT ENGINE sounds folder and saved with your Set.
+
+**DRAG INSTRUMENT (1.2).** Every pitched layer has an **INSTRUMENT** handle next to **MIDI**. It takes the layer's sound out of the plugin as an Ableton **Simpler** preset, so the vibe you built in the preview comes with you:
+- your loaded sound, or the built-in preview voice rendered to a sample if you didn't load one
+- the root note, so it plays in tune with no transposing
+- the sustain loop, so long notes hold like they do in the preview
+- one voice + glide for sub, basses and lead (notes that overlap slide, like the preview); chords and arp stay polyphonic
+- the attack / release and the level balance of the preview
+
+Drop **INSTRUMENT** on an empty spot in Live's tracks: you get a new MIDI track with that Simpler. Then drag **MIDI** onto the same track. Dragged MIDI is always at the real pitches, so the same clip also works on Serum or any other synth. Hold **Alt / Option** while dragging to get just the WAV (it carries its root and loop for samplers that read them). The files are kept in `~/Library/Application Support/TEAROUT ENGINE/Sounds/Instruments`; *Collect All and Save* copies them into your project.
 
 **MOVEMENT** (per layer) adds groove only:
 - re-strikes of notes that are already sounding
@@ -105,15 +111,17 @@ Download the zips from the run's *Artifacts*. A `v*` tag also attaches them to a
   - seed files
   - save / load state (the restored plugin regenerates the identical drop)
   - drag files and SAVE .MID
+  - sound slots and DRAG INSTRUMENT (the .adv is gzip, points at its WAV, and has the right root, loop and voices)
 
 ## Layout
 
 ```
-src/core/      engine (plain C++17): Theory, Catalogue (progressions, genres, patterns), Engine, Seed, MidiFile, Synth
+src/core/      engine (plain C++17): Theory, Catalogue (progressions, genres, patterns), Engine, Seed, MidiFile, Synth,
+               Sample (pitch detection, loops), Instrument (Simpler presets)
 src/plugin/    JUCE processor, editor, neon look-and-feel, widgets
 tests/         engine tests
 tools/         te_cli (dump / examples / render), te_snapshot (GUI to PNG), te_plugin_tests
 docs/          research, install guide, logo, screenshot
 ```
 
-*Built with [JUCE](https://juce.com) (AGPLv3 / JUCE licence). Check JUCE's licence terms before distributing builds.*
+*Built with [JUCE](https://juce.com) (AGPLv3 / JUCE licence). Check JUCE's licence terms before distributing builds. Third-party notices: [`THIRD_PARTY.md`](THIRD_PARTY.md).*

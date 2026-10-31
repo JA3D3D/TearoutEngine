@@ -117,19 +117,21 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     rootUpBtn.setTooltip ("Nudge the sound's root note up a semitone.");
     rootDownBtn.onClick = [this] { proc.nudgeRoot (proc.selectedLayer.load(), -1); refreshSoundControls(); };
     rootUpBtn.onClick = [this] { proc.nudgeRoot (proc.selectedLayer.load(), 1); refreshSoundControls(); };
-    simplerToggle.setColour (ToggleButton::textColourId, col::text);
-    simplerToggle.setColour (ToggleButton::tickColourId, col::lime);
-    simplerToggle.setColour (ToggleButton::tickDisabledColourId, col::dim);
-    simplerToggle.setTooltip ("On: the dragged MIDI is shifted so it plays in tune in a Simpler that holds the dragged SOUND (Simpler's default root is C3). Off: true pitches, for Serum or anything else.");
-    simplerToggle.onClick = [this] { proc.setSimplerMidi (proc.selectedLayer.load(), simplerToggle.getToggleState()); };
-    root.addAndMakeVisible (simplerToggle);
-    soundDrag.makeFile = [this] { return proc.soundFileForDrag (proc.selectedLayer.load()); };
-    soundDrag.onStatus = [this] (const String& s) {
-        setStatus (s.startsWith ("Nothing") ? String ("No sound loaded on this layer.") : "Drop it on an empty MIDI track: Live makes a Simpler. Then drag the MIDI onto the same track.");
+    // DRAG INSTRUMENT: the layer's sound (yours, or the built-in voice) as a Simpler preset; Alt/Option-drag = the WAV
+    instDrag.makeFile = [this] {
+        auto files = proc.exportInstrument (proc.selectedLayer.load());
+        instrumentMsg = files.message;
+        return ModifierKeys::getCurrentModifiersRealtime().isAltDown() ? files.wav : files.preset;
     };
-    soundDrag.big = true;
-    soundDrag.setTooltip ("Drag this layer's sound onto an empty MIDI track: Live puts it in a Simpler. Then drag the MIDI onto the same track.");
-    root.addAndMakeVisible (soundDrag);
+    instDrag.onStatus = [this] (const String& s) {
+        if (s.startsWith ("Nothing")) setStatus (instrumentMsg);
+        else setStatus (instrumentMsg + ". Drop it on an empty spot in Live for a new Simpler track, then drag the MIDI onto it.");
+    };
+    instDrag.big = true;
+    instDrag.setTooltip ("Drag this layer's sound out as an instrument: drop it on an empty spot in Live (or on a MIDI track) "
+                         "and you get a Simpler set up like the preview: same sound, root, loop, mono / glide and envelope. "
+                         "Then drag the MIDI onto that track. Hold Alt / Option while dragging to get just the WAV.");
+    root.addAndMakeVisible (instDrag);
 
     root.addAndMakeVisible (volumeKnob);
     volumeKnob.slider.setTooltip ("Preview volume (the MIDI itself has no volume).");
@@ -259,9 +261,8 @@ void TearoutEditor::layoutRoot()
     place (clearSoundBtn, 990, 520, 62, 26);
     place (rootDownBtn, 1086, 520, 26, 26);
     place (rootUpBtn, 1142, 520, 26, 26);
-    place (simplerToggle, 920, 550, 248, 22);
     place (layerDrag, 924, 612, 244, 46);
-    place (soundDrag, 1048, 612, 120, 46);
+    place (instDrag, 1028, 612, 140, 46);
 
     // seed + export
     place (bottomPanel, 16, 686, 1168, 82);
@@ -324,7 +325,7 @@ void TearoutEditor::bindLayerControls()
     layerDrag.colour = accent;
     layerDrag.text = String ("DRAG ") + te::layerName ((te::Layer) l) + " MIDI";
     layerDrag.repaint();
-    soundDrag.colour = accent;
+    instDrag.colour = accent;
     refreshSoundControls();
     songChanged();
 }
@@ -338,14 +339,13 @@ void TearoutEditor::refreshSoundControls()
     clearSoundBtn.setVisible (has);
     rootDownBtn.setVisible (has);
     rootUpBtn.setVisible (has);
-    simplerToggle.setVisible (has);
-    simplerToggle.setToggleState (has && proc.getSound (l).simplerMidi, dontSendNotification);
-    soundDrag.setVisible (has);
-    layerDrag.setBounds (924, 612, has ? 120 : 244, 46);
-    soundDrag.setBounds (1048, 612, 120, 46);
-    layerDrag.text = has ? String ("MIDI") : String ("DRAG ") + te::layerName ((te::Layer) l) + " MIDI";
-    soundDrag.text = "SOUND";
+    instDrag.setVisible (takes);
+    layerDrag.setBounds (924, 612, takes ? 100 : 244, 46);
+    instDrag.setBounds (1028, 612, 140, 46);
+    layerDrag.text = takes ? String ("MIDI") : String ("DRAG ") + te::layerName ((te::Layer) l) + " MIDI";
+    instDrag.text = "INSTRUMENT";
     layerDrag.repaint();
+    instDrag.repaint();
     for (auto* r : rows)
     {
         const bool rowHas = proc.getSound (r->layer).data != nullptr;
@@ -650,11 +650,16 @@ void TearoutEditor::paintOverlay (Graphics& g)
         }
         else
         {
+            drawNeonText (g, "Built-in voice", Rectangle<float> (924, 478, 244, 18), Colours::white.withAlpha (0.85f), 13.0f);
             g.setColour (col::dim);
             g.setFont (uiFont (11.5f));
-            g.drawFittedText ("Preview with your own sound: drop a WAV / AIFF on this layer's row, or LOAD.", 924, 478, 244, 36,
-                              Justification::topLeft, 2, 0.9f);
+            g.drawFittedText ("Your own: drop a WAV / AIFF on the row, or LOAD.", 924, 496, 244, 18,
+                              Justification::centredLeft, 1, 0.85f);
         }
+        g.setColour (col::text.withAlpha (0.75f));
+        g.setFont (uiFont (11.0f));
+        g.drawFittedText (String::fromUTF8 ("INSTRUMENT \xe2\x86\x92 an empty spot in Live = a Simpler with this sound. Then drag MIDI onto it."),
+                          924, 551, 244, 28, Justification::topLeft, 2, 0.85f);
     }
     else
     {

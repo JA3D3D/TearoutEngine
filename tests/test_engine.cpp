@@ -3,6 +3,7 @@
 #include "../src/core/MidiFile.h"
 #include "../src/core/Synth.h"
 #include "../src/core/Sample.h"
+#include "../src/core/Instrument.h"
 
 #include <algorithm>
 #include <cmath>
@@ -719,6 +720,58 @@ static void testSamples()
     }
 }
 
+static void testInstrumentPreset()
+{
+    for (int l : { (int) Layer::Chords, (int) Layer::Sub, (int) Layer::BassA, (int) Layer::BassB, (int) Layer::Lead, (int) Layer::Arp })
+    {
+        auto voice = renderLayerVoice ((Layer) l, 44100.0);
+        CHECK (voice && voice->left.size() > 4410, "built-in voice renders as a sample");
+        CHECK (voice->rootNote == instrumentRoot ((Layer) l), "rendered voice root");
+        bool finite = true;
+        float peak = 0;
+        for (float v : voice->left) { finite = finite && std::isfinite (v); peak = std::max (peak, std::fabs (v)); }
+        for (float v : voice->right) { finite = finite && std::isfinite (v); peak = std::max (peak, std::fabs (v)); }
+        CHECK (finite && peak > 0.01f, "rendered voice has sound");
+        if (l != (int) Layer::Arp) CHECK (voice->loopEnd > voice->loopStart, "sustained voices loop");
+        else CHECK (voice->loopEnd <= voice->loopStart, "the arp pluck is a one-shot");
+
+        auto audio = instrumentAudio (*voice, false);
+        float apeak = 0;
+        for (size_t i = 0; i < audio.left.size(); ++i) apeak = std::max ({ apeak, std::fabs (audio.left[i]), std::fabs (audio.right[i]) });
+        CHECK (std::fabs (apeak - 0.891f) < 0.01f && audio.left.size() == voice->left.size(), "instrument audio normalised to -1 dBFS");
+        CHECK (std::fabs (audio.volumeDb - (-6.0 - 20.0 * std::log10 (0.891 / peak))) < 0.05, "Simpler volume restores the preview level");
+
+        auto spec = instrumentDefaults ((Layer) l);
+        spec.userName = "TEAROUT <test> & \"co\"";
+        spec.sampleName = "growl's";
+        spec.wavPath = "/Users/me/Library/Application Support/TEAROUT ENGINE/Sounds/Instruments/a & b.wav";
+        spec.frames = (int) voice->left.size();
+        spec.fileSize = 123456;
+        spec.rootNote = voice->rootNote;
+        spec.loopStart = voice->loopStart;
+        spec.loopEnd = voice->loopEnd;
+        const auto xml = makeSimplerPresetXml (spec);
+        CHECK (xml.find ("@@") == std::string::npos, "no template markers left");
+        CHECK (xml.find ("MinorVersion=\"11.0") != std::string::npos, "preset is tagged for Live 11");
+        CHECK (xml.find ("<RootKey Value=\"" + std::to_string (voice->rootNote) + "\"") != std::string::npos, "root key written");
+        CHECK (xml.find ("a &amp; b.wav") != std::string::npos && xml.find ("&lt;test&gt;") != std::string::npos, "paths and names escaped");
+        const bool mono = l == (int) Layer::Sub || l == (int) Layer::BassA || l == (int) Layer::BassB || l == (int) Layer::Lead;
+        CHECK ((xml.find ("<NumVoices Value=\"0\"") != std::string::npos) == mono, "mono layers get one voice");
+        CHECK (xml.find ("MpePitchBendUsesTuning") == std::string::npos, "no Live 12-only settings");
+        CHECK (xml.find ("<SustainLoop>") != std::string::npos, "sustain loop block present");
+    }
+    // a loaded sound: its gain is part of the preview level
+    SampleData quiet;
+    quiet.left.assign (1000, 0.1f);
+    quiet.right.assign (1000, -0.1f);
+    quiet.gain = 2.0f;
+    auto qa = instrumentAudio (quiet, true);
+    CHECK (std::fabs (qa.left[10] - 0.891f) < 1e-3f && std::fabs (qa.right[10] + 0.891f) < 1e-3f, "user sound normalised");
+    CHECK (std::fabs (qa.volumeDb - (-6.0 - 20.0 * std::log10 (0.891 / 0.2))) < 0.01, "user sound gain kept in the volume");
+    CHECK (instrumentDefaults (Layer::BassA, true).attackMs == 2.0 && instrumentDefaults (Layer::BassA).glide, "user sound envelope / glide");
+    CHECK (instrumentDefaults (Layer::Chords).voicesIndex == 7 && ! instrumentDefaults (Layer::Chords).glide, "chords are poly");
+}
+
 int main()
 {
     std::printf ("TEAROUT ENGINE engine tests\n");
@@ -732,6 +785,7 @@ int main()
     testPlayer();
     testGenerateVaries();
     testSamples();
+    testInstrumentPreset();
     std::printf ("%d checks, %d failed\n", g_checks, g_fail);
     if (g_fail)
         for (auto& f : g_failures) std::printf ("  %5d x %s\n", f.second, f.first.c_str());
