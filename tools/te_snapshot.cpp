@@ -5,6 +5,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdlib>
+
 using namespace juce;
 
 static void writePng (const Image& img, const File& f)
@@ -31,6 +33,12 @@ int main (int argc, char** argv)
         if (auto* p = proc.apvts.getParameter (tep::ids::layer (l, "movement")))
             p->setValueNotifyingHost (p->convertTo0to1 (0.45f));
     proc.regenerateNow();
+    if (auto* snd = std::getenv ("TE_SNAPSHOT_SOUND"))
+    {
+        String msg;
+        proc.loadLayerSound (layer >= 0 ? layer : 2, File (snd), msg);
+        std::printf ("%s\n", msg.toRawUTF8());
+    }
 
     // run the preview for a moment so the playhead shows
     proc.setPreviewPlaying (true);

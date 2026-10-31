@@ -1,16 +1,16 @@
-# First run in Live 11 (about 5 minutes)
+# First run in Live 11: TEAROUT ENGINE 1.1 (about 5 minutes)
 
-Everything below has been tested off-line: the engine, the processor, state save/load, capture, the MIDI files and the GUI. The one step that hasn't run is inside Live on a Mac. Go down the list, and at the first ✗ send back the step number and a screenshot.
+Go down the list. At the first step that doesn't work, send back the step number and a screenshot.
 
 | # | Do this | You should see / hear |
 |---|---|---|
-| 1 | Drop **TEAROUT ENGINE** on a MIDI track | The neon window opens. Genre is Tearout Dubstep, key F. |
-| 2 | Press **PREVIEW** | The drop plays on the built-in synth, the playhead moves, and the chord chips light up. |
-| 3 | Start Live's transport | The preview follows Live's tempo and position. |
-| 4 | Click **BASS A**, turn **MOVEMENT** from 0 to 100 % | At 0 you get the pure 3-3-2 sustain ride. Turning it up adds re-strikes, flicks and approach notes. The chords never change. |
-| 5 | Press **VARIATION** a few times | Same chords and holds; only the groove placement changes. |
-| 6 | Press **GENERATE** | A new progression (PROGRESSION is on Auto). |
-| 7 | Drag the **MIDI** button of **BASS A** onto an empty MIDI track | A clip named `TEAROUT_..._Bass-A` appears with the same notes. |
-| 8 | Drag **DRAG ALL LAYERS** into the empty area below the tracks | One track per layer. |
-| 9 | Put any chord clip on the TEAROUT track, press **CAPTURE**, play it, stop | The seed zone shows its key and chords, and PROGRESSION switches to *From Seed*. |
-| 10 | Save the Set, close it, reopen it | Same settings, same seed, same drop. |
+| 1 | Quit Live, install the new .pkg, reopen Live, open a Set that already had TEAROUT ENGINE | Same settings and the same drop as before the update |
+| 2 | Drop **TEAROUT ENGINE** on a new MIDI track | The neon window opens. **PLAY** is off, so it's silent even while Live plays |
+| 3 | Press **PLAY**, then press it again (**STOP**) | The drop plays, then stops dead |
+| 4 | **PLAY** on, start Live's transport | It locks to Live (**FOLLOW LIVE** on). Turn FOLLOW LIVE off and it loops on its own |
+| 5 | Switch a few layers **OFF** in the layer list | Those layers go quiet right away |
+| 6 | Press **GENERATE** a few times | Each one is clearly a new drop: chords and patterns change. **VARIATION** keeps the notes and only moves the groove |
+| 7 | Drag a WAV (e.g. a bass sustain) onto the **BASS A** row | The row gets a speaker badge, the panel shows the sound and its root, and the preview plays your sound |
+| 8 | Make an empty MIDI track. Drag **SOUND** onto it, then **MIDI** onto it | Live makes a Simpler with your sound and a clip, and it plays in tune with the preview |
+| 9 | VST3 version: **MIDI OUT** = Bass A. On a Serum track, set MIDI From = the TEAROUT track / TEAROUT ENGINE, Monitor = In | Serum plays the Bass A part while Live plays |
+| 10 | Save the Set, close it, reopen it | The sound slot, settings and drop are all still there |

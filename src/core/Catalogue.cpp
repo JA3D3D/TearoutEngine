@@ -1,5 +1,7 @@
 #include "Catalogue.h"
 
+#include <algorithm>
+
 namespace te
 {
 using namespace pat;
@@ -241,6 +243,69 @@ const GenreProfile& genreProfile (Genre g)
           "The progressions in every song: I-V-vi-IV and friends, held chords, 1/8 bass, hook, up-down arp." },
     };
     return profiles[(int) g];
+}
+
+const std::vector<std::pair<int, double>>& genrePatternPool (Genre g, Layer l)
+{
+    using P = std::vector<std::pair<int, double>>;
+    // [genre][layer]: chords, sub, bass a, bass b, lead, arp, drums, fx
+    static const P pools[kNumGenres][kNumLayers] = {
+        { // Melodic Dubstep
+          { { ChHold, 3 }, { ChStabs332, 2 }, { ChPulse8, 1 } },
+          { { SubHold, 3 }, { SubHoldKick, 1 } },
+          { { BassHoldRestrike, 3 }, { BassLongHold, 2 }, { BassRide332, 1.5 }, { BassRide422, 1 } },
+          { { BDouble, 3 }, { BRestrikes, 1 }, { BAnswers, 1 } },
+          { { LeadHook, 3 }, { LeadLong, 2 }, { LeadCallResponse, 1 } },
+          { { ArpUp16, 2 }, { ArpUpDown16, 2 }, { ArpPluck332, 2 }, { ArpUp2Oct, 1 } },
+          { { DrHalfTime, 3 }, { DrHalfTimeHeavy, 1 } },
+          { { FxImpacts, 2 }, { FxImpactsRisers, 2 }, { FxSweeps, 1 } } },
+        { // Tearout
+          { { ChOff, 3 }, { ChHalfTimeStabs, 1 } },
+          { { SubHold, 3 }, { SubHoldKick, 2 }, { SubFollowBass, 1 } },
+          { { BassRide332, 3 }, { BassRide422, 2 }, { BassHoldRestrike, 2 }, { BassLongHold, 1 }, { BassTriplet, 1 } },
+          { { BAnswers, 3 }, { BSwap, 2 }, { BRestrikes, 2 }, { BHalfBar, 1 } },
+          { { LeadOff, 1 } },
+          { { ArpOff, 1 } },
+          { { DrHalfTimeHeavy, 3 }, { DrHalfTime, 2 }, { DrFourFloor, 0.7 } },
+          { { FxImpacts, 2 }, { FxImpactsRisers, 2 }, { FxSweeps, 1 } } },
+        { // Riddim
+          { { ChOff, 1 } },
+          { { SubHoldKick, 3 }, { SubHold, 1 }, { SubFollowBass, 1 } },
+          { { BassTriplet, 3 }, { BassPump8, 1 }, { BassRide332, 1 } },
+          { { BSwap, 3 }, { BRestrikes, 1 }, { BAnswers, 1 } },
+          { { LeadOff, 3 }, { LeadCallResponse, 1 } },
+          { { ArpOff, 1 } },
+          { { DrHalfTime, 2 }, { DrHalfTimeHeavy, 1 }, { DrFourFloor, 1 } },
+          { { FxImpacts, 2 }, { FxImpactsRisers, 1 } } },
+        { // Trap
+          { { ChHold, 3 }, { ChStabs332, 1 } },
+          { { SubHoldKick, 1 } },
+          { { BassOff, 1 } },
+          { { BOff, 1 } },
+          { { LeadHook, 3 }, { LeadCallResponse, 2 }, { LeadLong, 1 } },
+          { { ArpUp8, 3 }, { ArpUpTrip, 1 }, { ArpOff, 1 } },
+          { { DrTrap, 1 } },
+          { { FxImpacts, 2 }, { FxSweeps, 1 } } },
+        { // Hardstyle
+          { { ChOffbeat8, 3 }, { ChStabs332, 1 }, { ChHold, 1 } },
+          { { SubOffbeat8, 1 } },
+          { { BassOffbeat8, 1 } },
+          { { BOff, 2 }, { BRestrikes, 1 } },
+          { { LeadRiff8, 3 }, { LeadLong, 1 }, { LeadCallResponse, 1 } },
+          { { ArpUp16, 2 }, { ArpUp2Oct, 1 }, { ArpOff, 1 } },
+          { { DrHardstyle, 1 } },
+          { { FxImpactsRisers, 3 }, { FxImpacts, 1 } } },
+        { // Common
+          { { ChHold, 2 }, { ChStabs332, 1 }, { ChPulse8, 1 } },
+          { { SubHold, 2 }, { SubPulse4, 1 } },
+          { { BassPump8, 2 }, { BassHoldRestrike, 1 }, { BassRide332, 1 } },
+          { { BOff, 1 } },
+          { { LeadHook, 3 }, { LeadCallResponse, 1 }, { LeadLong, 1 } },
+          { { ArpUpDown16, 2 }, { ArpUp16, 1 }, { ArpPluck332, 1 } },
+          { { DrBackbeat, 2 }, { DrFourFloor, 2 } },
+          { { FxImpacts, 1 } } },
+    };
+    return pools[std::clamp ((int) g, 0, kNumGenres - 1)][std::clamp ((int) l, 0, kNumLayers - 1)];
 }
 
 std::vector<std::string> genreChoiceNames()

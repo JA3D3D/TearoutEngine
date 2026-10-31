@@ -26,6 +26,7 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override;
     void fileDragExit (const juce::StringArray&) override;
+    void fileDragMove (const juce::StringArray& files, int x, int y) override;
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
@@ -45,6 +46,11 @@ private:
     void paintOverlay (juce::Graphics&);
     void layoutRoot();
     void browseForSeed();
+    void browseForSound (int layer);
+    int rowAt (juce::Point<int> editorPos) const;
+    bool overLayerPanel (juce::Point<int> editorPos) const;
+    void setDropHover (int layer);
+    void refreshSoundControls();
     void saveMidiFiles();
 
     TearoutProcessor& proc;
@@ -58,13 +64,15 @@ private:
 
     juce::ComboBox genreBox, keyBox, progBox, chordLenBox, barsBox, midiOutBox, patternBox;
     juce::TextButton generateBtn { "GENERATE" }, variationBtn { "VARIATION" }, playBtn { "PREVIEW" },
-        captureBtn { "CAPTURE" }, clearSeedBtn { "CLEAR" }, saveBtn { "SAVE .MID" }, allViewBtn { "ALL" };
+        captureBtn { "CAPTURE" }, clearSeedBtn { "CLEAR" }, saveBtn { "SAVE .MID" }, allViewBtn { "ALL" },
+        followBtn { "FOLLOW LIVE" }, loadSoundBtn { "LOAD" }, clearSoundBtn { "CLEAR" }, rootDownBtn { "-" }, rootUpBtn { "+" };
+    juce::ToggleButton simplerToggle { "Simpler-ready MIDI" };
     Knob volumeKnob { "Preview", col::cyan }, octaveKnob { "Octave", col::cyan }, movementKnob { "Movement", col::cyan },
         lengthKnob { "Length", col::cyan };
     ChordStrip chordStrip;
     PianoRoll roll;
     juce::OwnedArray<LayerRow> rows;
-    DragHandle layerDrag { "DRAG LAYER", col::cyan }, allDrag { "DRAG ALL LAYERS", col::magenta };
+    DragHandle layerDrag { "DRAG LAYER", col::cyan }, allDrag { "DRAG ALL LAYERS", col::magenta }, soundDrag { "SOUND", col::cyan };
     SeedZone seedZone;
 
     using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

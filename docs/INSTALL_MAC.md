@@ -2,7 +2,7 @@
 
 ## Easiest: the installer (.pkg)
 
-1. Double-click `TEAROUT_ENGINE_1.0_macOS.pkg`. It puts:
+1. Quit Live. Double-click `TEAROUT_ENGINE_<version>_macOS.pkg`, or in Terminal run `sudo installer -pkg ~/Downloads/TEAROUT_ENGINE_<version>_macOS.pkg -target /`. A new version installs over the old one, and your Sets keep working. It puts:
    - the VST3 in `/Library/Audio/Plug-Ins/VST3`
    - the AU in `/Library/Audio/Plug-Ins/Components`
    - the app in `/Applications`

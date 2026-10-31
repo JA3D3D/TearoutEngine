@@ -50,6 +50,9 @@ int main (int argc, char** argv)
 
     FakePlayHead head;
     inst->setPlayHead (&head);
+    // the preview stays silent until PLAY is pressed in the editor; MIDI OUT still follows the host
+    for (auto* prm : inst->getParameters())
+        if (prm->getName (64) == "MIDI Out") prm->setValueNotifyingHost (prm->getValueForText ("All Layers"));
     inst->prepareToPlay (48000.0, 512);
     AudioBuffer<float> buf (2, 512);
     double energy = 0;
@@ -64,8 +67,9 @@ int main (int argc, char** argv)
         for (const auto m : midi) if (m.getMessage().isNoteOn()) ++notesOut;
         head.ppq += 512.0 / samplesPerBeat;
     }
-    CHECK (energy > 1.0, "plays the drop in sync with the host transport");
-    std::printf ("      audio energy %.2f, MIDI notes out %d (MIDI OUT is Off by default)\n", energy, notesOut);
+    CHECK (energy == 0.0, "silent while the host plays until PLAY is pressed");
+    CHECK (notesOut > 20, "MIDI OUT streams the drop in sync with the host transport");
+    std::printf ("      audio energy %.2f, MIDI notes out %d\n", energy, notesOut);
 
     // change a parameter through the host interface, save, restore into a new instance
     auto* genre = inst->getParameters()[0];

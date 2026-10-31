@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/logo.png" width="560" alt="TEAROUT ENGINE"></p>
 
-# TEAROUT ENGINE 1.0
+# TEAROUT ENGINE 1.1
 
 TEAROUT ENGINE is a MIDI generator plugin (VST3 / AU / Standalone) for building drops. It works out the harmony first, then writes the parts of a drop around it: real chord progressions, sustained basses with no gaps, a hook and an arpeggiator. Each layer comes out as its own MIDI clip that you drag into Ableton.
 
@@ -29,13 +29,18 @@ TEAROUT ENGINE is a MIDI generator plugin (VST3 / AU / Standalone) for building 
 | **DRUMS** | Drum Rack notes: half-time, half-time heavy, trap, four-on-floor, hardstyle or backbeat. |
 | **FX** | Impacts, risers, reverse crashes and sweeps at phrase boundaries. |
 
+**Sound slots (1.1).** Drop your own WAV / AIFF / FLAC / MP3 onto any pitched layer's row, or press **LOAD**. The preview then plays your sound. The root note is detected from the audio, and you can nudge it with **ROOT − / +**.
+- Drag **SOUND** onto an empty MIDI track: Live makes a Simpler holding it.
+- Drag **MIDI** onto the same track. With **Simpler-ready MIDI** on, the clip is shifted to match Simpler's default root (C3), so it plays in tune straight away. Turn it off to get the true pitches for Serum or any other synth.
+- Sounds are copied into the TEAROUT ENGINE sounds folder and saved with your Set.
+
 **MOVEMENT** (per layer) adds groove only:
 - re-strikes of notes that are already sounding
 - short octave flicks
 - an approach note into the next chord
 - 1/32 slides at turnarounds
 
-It never removes a note or changes the chords. At 0 you get the pure pattern. **VARIATION** keeps the song and only moves where that groove lands. **GENERATE** gives you a new idea.
+It never removes a note or changes the chords. At 0 you get the pure pattern. **VARIATION** keeps the song and only moves where that groove lands. **GENERATE** makes a completely new drop: a new progression (on Auto), new patterns for every layer set to "Genre", a new hook and a new groove. A layer you set to a specific pattern keeps it.
 
 The full research behind the rules is in [`docs/DROP_RESEARCH.md`](docs/DROP_RESEARCH.md).
 
@@ -43,7 +48,7 @@ The full research behind the rules is in [`docs/DROP_RESEARCH.md`](docs/DROP_RES
 
 1. Install it ([`docs/INSTALL_MAC.md`](docs/INSTALL_MAC.md)), then drop **TEAROUT ENGINE** on a MIDI track.
 2. Pick **GENRE**, **KEY** and **PROGRESSION** (★ marks the progressions typical for the genre; *Auto* picks one).
-3. Press **PREVIEW** to hear the drop on the built-in preview synth. When Live's transport is running, the preview follows Live.
+3. Press **PLAY** to hear the drop on the built-in preview synth, and **STOP** to silence it completely, even while Live is playing. With **FOLLOW LIVE** on, it locks to Live's transport when Live plays. Each layer's **ON / OFF** switch takes it out of the preview.
 4. Click a layer and set its **PATTERN**. Use **MOVEMENT** for groove and **LENGTH** (Legato = no gaps).
 5. **Drag** a layer's **MIDI** button onto a track to get its clip. Or drag **DRAG ALL LAYERS**, or **SAVE .MID** into a folder.
 
@@ -57,11 +62,14 @@ The seed's **key and chords** become *PROGRESSION = From Seed*. That progression
 
 **To learn from a stem:** in Live 11, right-click the audio → *Convert Harmony / Melody to New MIDI Track*, then capture that clip.
 
-### MIDI OUT
+### MIDI OUT: driving Serum (or any synth) on another track
 
-Set **MIDI OUT** to *Selected Layer* or *All Layers* (channels 1–8) to stream the notes live. To route them, set another MIDI track's *MIDI From* to this track and pick TEAROUT ENGINE in the second menu.
+A plug-in can't load or control an instrument on another track. What it can do is stream a layer as live MIDI:
+1. Use the **VST3** version. Live doesn't take MIDI out of Audio Units.
+2. Set **MIDI OUT** to the layer you want, for example *Bass A*.
+3. On the Serum track, set *MIDI From* to the TEAROUT track, pick **TEAROUT ENGINE** in the second menu, and set Monitor to **In**.
 
-Whether Live lets you route MIDI out of a plug-in depends on the plug-in format, so it may not work. Dragging clips always works and is the main workflow.
+Use one layer per Serum track. Live merges MIDI channels between tracks, so *All Layers* lands on one track as a stack. MIDI OUT keeps following Live even with the preview stopped. Dragging clips still works for everything.
 
 ## Building
 

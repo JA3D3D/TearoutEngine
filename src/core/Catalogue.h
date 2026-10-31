@@ -77,6 +77,8 @@ struct GenreProfile
 };
 
 const GenreProfile& genreProfile (Genre g);
+// Weighted patterns a genre uses for a layer (GENERATE picks among these for layers set to "Genre").
+const std::vector<std::pair<int, double>>& genrePatternPool (Genre g, Layer l);
 std::vector<std::string> genreChoiceNames();
 std::vector<std::string> keyChoiceNames();
 

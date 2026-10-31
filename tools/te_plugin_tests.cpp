@@ -33,6 +33,65 @@ static void run (tep::TearoutProcessor& p, int blocks, MidiBuffer* in = nullptr,
     }
 }
 
+struct FakeHead : AudioPlayHead
+{
+    double ppq = 0, bpm = 150;
+    bool playing = true;
+    Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo i;
+        i.setIsPlaying (playing);
+        i.setBpm (bpm);
+        i.setPpqPosition (ppq);
+        return i;
+    }
+};
+
+static File writeTestTone (double hz, const String& name)
+{
+    auto f = File::getSpecialLocation (File::tempDirectory).getChildFile (name);
+    f.deleteFile();
+    const double sr = 44100.0;
+    AudioBuffer<float> buf (2, (int) (sr * 2.0));
+    double ph = 0;
+    for (int i = 0; i < buf.getNumSamples(); ++i)
+    {
+        ph += hz / sr;
+        double v = 0;
+        for (int h = 1; h <= 10; ++h) v += std::sin (MathConstants<double>::twoPi * h * ph) / h;
+        const float x = (float) std::tanh (1.5 * v) * 0.7f;
+        buf.setSample (0, i, x);
+        buf.setSample (1, i, x);
+    }
+    WavAudioFormat wav;
+    std::unique_ptr<OutputStream> os (f.createOutputStream());
+    auto writer = wav.createWriterFor (os, AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (2).withBitsPerSample (24));
+    if (writer) writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+    return f;
+}
+
+static double blockEnergy (tep::TearoutProcessor& p, int blocks, int* notesOn = nullptr, int* wrongChannel = nullptr, FakeHead* head = nullptr)
+{
+    AudioBuffer<float> buf (2, 512);
+    double e = 0;
+    for (int b = 0; b < blocks; ++b)
+    {
+        MidiBuffer midi;
+        p.processBlock (buf, midi);
+        e += buf.getRMSLevel (0, 0, 512);
+        for (const auto m : midi)
+        {
+            if (m.getMessage().isNoteOn())
+            {
+                if (notesOn) ++*notesOn;
+                if (wrongChannel && m.getMessage().getChannel() != 1) ++*wrongChannel;
+            }
+        }
+        if (head) head->ppq += 512.0 / (48000.0 * 60.0 / head->bpm);
+    }
+    return e;
+}
+
 int main()
 {
     ScopedJuceInitialiser_GUI init;
@@ -172,6 +231,117 @@ int main()
         p.clearSeed();
         CHECK (! p.getSeed().valid, "seed cleared");
         CHECK (roundToInt (p.apvts.getRawParameterValue (tep::ids::progression)->load()) == te::kProgressionAuto, "clear seed resets PROGRESSION");
+    }
+
+
+    // ---- 1.1: sound slots ----
+    {
+        tep::TearoutProcessor p;
+        p.prepareToPlay (48000, 512);
+        auto tone = writeTestTone (34.65, "TE test growl - C.wav"); // named C, really C#0
+        String msg;
+        CHECK (p.loadLayerSound ((int) te::Layer::BassA, tone, msg), "a WAV loads into BASS A");
+        std::printf ("  %s\n", msg.toRawUTF8());
+        CHECK (p.getSound ((int) te::Layer::BassA).root == 25, "root detected from the audio (C#0)");
+        CHECK (p.getSound ((int) te::Layer::BassA).file.isAChildOf (tep::TearoutProcessor::soundsFolder()), "sound copied into the sounds folder");
+        CHECK (p.soundFileForDrag ((int) te::Layer::BassA).existsAsFile(), "SOUND drag file exists");
+        CHECK (! p.loadLayerSound ((int) te::Layer::Drums, tone, msg), "drums don't take a sound");
+
+        // Simpler-ready MIDI: shifted so Simpler's C3 root plays the right pitch
+        auto readNotes = [] (const File& f) {
+            MemoryBlock mb;
+            f.loadFileAsData (mb);
+            std::vector<uint8_t> b ((const uint8_t*) mb.getData(), (const uint8_t*) mb.getData() + mb.getSize());
+            std::vector<te::Note> n;
+            double bpm;
+            std::string err;
+            te::readMidi (b, n, bpm, err, false);
+            std::sort (n.begin(), n.end(), [] (const te::Note& a, const te::Note& c) { return a.start != c.start ? a.start < c.start : a.pitch < c.pitch; });
+            return n;
+        };
+        auto songNotes = p.getSong()->layers[(size_t) te::Layer::BassA];
+        auto shifted = readNotes (p.writeLayerMidi ((int) te::Layer::BassA));
+        CHECK (! shifted.empty() && shifted.size() == songNotes.size() && shifted[0].pitch == songNotes[0].pitch + 35, "Simpler-ready MIDI is shifted by (C3 - root)");
+        p.setSimplerMidi ((int) te::Layer::BassA, false);
+        auto plain = readNotes (p.writeLayerMidi ((int) te::Layer::BassA));
+        CHECK (! plain.empty() && plain[0].pitch == songNotes[0].pitch, "Simpler-ready off = true pitches");
+        p.setSimplerMidi ((int) te::Layer::BassA, true);
+        p.nudgeRoot ((int) te::Layer::BassA, 1);
+        CHECK (p.getSound ((int) te::Layer::BassA).root == 26, "root nudge");
+        p.nudgeRoot ((int) te::Layer::BassA, -1);
+
+        // the preview plays the sound
+        p.setPreviewPlaying (true);
+        CHECK (blockEnergy (p, 200) > 1.0, "preview plays with a user sound");
+
+        // saved with the Set
+        MemoryBlock state;
+        p.getStateInformation (state);
+        tep::TearoutProcessor q;
+        q.prepareToPlay (48000, 512);
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        CHECK (q.getSound ((int) te::Layer::BassA).data != nullptr && q.getSound ((int) te::Layer::BassA).root == 25, "sound + root survive save/load");
+        q.clearLayerSound ((int) te::Layer::BassA);
+        CHECK (q.getSound ((int) te::Layer::BassA).data == nullptr && ! q.soundFileForDrag ((int) te::Layer::BassA).existsAsFile(), "sound cleared");
+        tone.deleteFile();
+    }
+
+    // ---- 1.1: PLAY / STOP, follow Live, layer ON/OFF, MIDI OUT per layer ----
+    {
+        tep::TearoutProcessor p;
+        p.prepareToPlay (48000, 512);
+        FakeHead head;
+        p.setPlayHead (&head);
+        p.setPreviewPlaying (false);
+        CHECK (blockEnergy (p, 100, nullptr, nullptr, &head) == 0.0, "STOP is silent even while Live plays");
+        setP (p, tep::ids::midiOut, 5); // Bass A only
+        int ons = 0, wrong = 0;
+        blockEnergy (p, 300, &ons, &wrong, &head);
+        CHECK (ons > 5 && wrong == 0, "MIDI OUT keeps following Live with the preview silent (one layer, channel 1)");
+        setP (p, tep::ids::midiOut, 0);
+        p.setPreviewPlaying (true);
+        CHECK (blockEnergy (p, 100, nullptr, nullptr, &head) > 0.5, "PLAY follows Live");
+        for (int l = 0; l < te::kNumLayers; ++l) p.setMute (l, true);
+        blockEnergy (p, 20, nullptr, nullptr, &head);
+        CHECK (blockEnergy (p, 40, nullptr, nullptr, &head) < 0.05, "all layers OFF cuts the sound right away");
+        for (int l = 0; l < te::kNumLayers; ++l) p.setMute (l, false);
+        p.setFollowLive (false);
+        head.playing = false;
+        CHECK (blockEnergy (p, 100) > 0.5, "own loop when not following Live");
+        p.setPlayHead (nullptr);
+    }
+
+    // ---- 1.1: GENERATE = a new drop; 1.0 sets keep their patterns ----
+    {
+        tep::TearoutProcessor p;
+        p.prepareToPlay (48000, 512);
+        int different = 0;
+        for (int k = 0; k < 6; ++k)
+        {
+            auto before = p.getSong();
+            p.generateNew();
+            auto after = p.getSong();
+            int d = before->progressionLabel != after->progressionLabel ? 2 : 0;
+            for (int l = 0; l < te::kNumLayers; ++l) if (before->pattern[(size_t) l] != after->pattern[(size_t) l]) ++d;
+            if (d >= 2) ++different;
+        }
+        CHECK (different >= 5, "GENERATE gives a clearly different drop");
+
+        setP (p, tep::ids::songSeed, 500);
+        p.regenerateNow();
+        MemoryBlock state;
+        p.getStateInformation (state);
+        auto xml = AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize());
+        if (auto* extra = xml->getChildByName ("TE_EXTRA")) extra->removeAttribute ("engine");
+        MemoryBlock legacy;
+        AudioProcessor::copyXmlToBinary (*xml, legacy);
+        tep::TearoutProcessor q;
+        q.setStateInformation (legacy.getData(), (int) legacy.getSize());
+        q.regenerateNow();
+        bool defaults = true;
+        for (int l = 0; l < te::kNumLayers; ++l)
+            defaults = defaults && q.getSong()->pattern[(size_t) l] == te::genreProfile (q.currentSettings().genre).defaults[l];
+        CHECK (defaults, "a 1.0 Set opens with the same patterns it had");
     }
 
     std::printf ("%d plugin checks, %d failed\n", checks, failed);

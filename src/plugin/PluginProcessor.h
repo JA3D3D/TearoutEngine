@@ -3,11 +3,13 @@
 
 #include "../core/Engine.h"
 #include "../core/MidiFile.h"
+#include "../core/Sample.h"
 #include "../core/Synth.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -75,10 +77,34 @@ public:
     bool isCapturing() const { return capturing.load(); }
     int capturedNoteCount() const { return (int) captured.size(); }
 
-    // preview
+    // ---- sound slots: your own sample per pitched layer (1.1) -----------------------------------------
+    struct SoundSlot
+    {
+        juce::File file;              // our copy, kept in the TEAROUT ENGINE sounds folder
+        int root = 60;                // MIDI note the sample was recorded at
+        juce::String rootInfo;        // "detected C0 (32.7 Hz)"
+        bool simplerMidi = true;      // dragged MIDI is transposed for Simpler's default root (C3)
+        std::shared_ptr<const te::SampleData> data;
+    };
+    static bool layerTakesSound (int layer);
+    static bool isAudioFile (const juce::File& f);
+    static juce::File soundsFolder();
+    bool loadLayerSound (int layer, const juce::File& file, juce::String& message);
+    void clearLayerSound (int layer);
+    void nudgeRoot (int layer, int semitones);
+    void setSimplerMidi (int layer, bool on);
+    const SoundSlot& getSound (int layer) const { return sounds[(size_t) juce::jlimit (0, te::kNumLayers - 1, layer)]; }
+    juce::File soundFileForDrag (int layer) const;
+
+    // ---- playback ----------------------------------------------------------------------------------------
+    // PLAY is the master switch for the preview sound. With FOLLOW LIVE on it locks to Live's transport
+    // while Live plays; otherwise it runs its own loop.
+    void setFollowLive (bool on) { followLive.store (on); }
+    bool isFollowingLive() const { return followLive.load(); }
     void setPreviewPlaying (bool on) { previewOn.store (on); }
     bool isPreviewPlaying() const { return previewOn.load(); }
     bool isHostPlaying() const { return hostPlaying.load(); }
+    bool isRunning() const { return runningNow.load(); }
     double playheadTicks() const { return playTick.load(); }
     double currentBpm() const { return bpmNow.load(); }
 
@@ -87,7 +113,7 @@ public:
     void setSolo (int layer, bool s);
     bool isMuted (int layer) const { return (muteMask.load() >> layer) & 1u; }
     bool isSoloed (int layer) const { return (soloMask.load() >> layer) & 1u; }
-    std::atomic<int> selectedLayer { 1 }; // UI state (also picks the MIDI OUT layer)
+    std::atomic<int> selectedLayer { 1 }; // UI state (also picks the MIDI OUT layer in "Selected Layer" mode)
 
     // MIDI export
     juce::File writeLayerMidi (int layer) const;   // temp file for drag & drop (layer -1 = all layers)
@@ -118,11 +144,22 @@ private:
     juce::AudioBuffer<float> renderBuffer;
     double sampleRate = 44100.0;
     double internalTick = 0;
-    std::atomic<bool> previewOn { false }, hostPlaying { false };
+    std::atomic<bool> previewOn { false }, hostPlaying { false }, runningNow { false };
     std::atomic<double> playTick { 0 }, bpmNow { 140.0 }, songBpm { 150.0 };
     bool timerSawPlaying = false;
     std::atomic<uint32_t> muteMask { 0 }, soloMask { 0 };
     int lastMidiOutMode = 0;
+
+    // sound slots
+    juce::AudioFormatManager formats;
+    std::array<SoundSlot, te::kNumLayers> sounds;
+    std::array<std::atomic<const te::SampleData*>, te::kNumLayers> soundPtr;
+    struct RetiredSound { std::shared_ptr<const te::SampleData> data; juce::uint32 time; };
+    std::vector<RetiredSound> soundKeepAlive;
+    void publishSound (int layer, std::shared_ptr<const te::SampleData> data);
+    bool readSound (int layer, const juce::File& file, int forcedRoot, const juce::String& forcedInfo, juce::String& message);
+    std::atomic<bool> followLive { true };
+    int engineVersion = 2; // 1 = a set saved by 1.0 (fixed genre patterns until GENERATE is pressed)
 
     // capture
     struct CapEvent { double tick; int pitch; int velocity; bool on; };

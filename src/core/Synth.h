@@ -35,7 +35,14 @@ public:
     // Heavier preview: more distortion on basses, chords and kick (used by the CLI renders).
     void setHeavy (bool h) noexcept { heavy = h; }
     // Not real-time safe: call before playback starts.
-    void setLayerSample (int layer, std::shared_ptr<const SampleData> s) { if (layer >= 0 && layer < kNumLayers) layerSample[(size_t) layer] = std::move (s); }
+    void setLayerSample (int layer, std::shared_ptr<const SampleData> s)
+    {
+        if (layer < 0 || layer >= kNumLayers) return;
+        layerSampleOwner[(size_t) layer] = std::move (s);
+        layerSample[(size_t) layer] = layerSampleOwner[(size_t) layer].get();
+    }
+    // Real-time safe: the caller keeps the data alive while it can be in use.
+    void setLayerSampleRaw (int layer, const SampleData* s) noexcept { if (layer >= 0 && layer < kNumLayers) layerSample[(size_t) layer] = s; }
     void setLayerGain (int layer, float g) noexcept { if (layer >= 0 && layer < kNumLayers) layerGain[(size_t) layer] = g; }
 
 private:
@@ -74,7 +81,8 @@ private:
 
     double sr = 44100.0;
     bool heavy = false;
-    std::array<std::shared_ptr<const SampleData>, kNumLayers> layerSample {};
+    std::array<std::shared_ptr<const SampleData>, kNumLayers> layerSampleOwner {};
+    std::array<const SampleData*, kNumLayers> layerSample {};
     std::array<float, kNumLayers> layerGain { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<Voice, kMaxVoices> voices {};
     uint64_t counter = 0;
@@ -131,7 +139,9 @@ private:
     bool wasPlaying = false;
     double expected = -1;
     double lastPos = 0;
-    std::array<std::bitset<128>, kNumLayers> held {};
+    std::array<std::bitset<128>, kNumLayers> heldSynth {}, heldMidi {};
+    uint32_t lastLayerMask = 0xFFFFFFFFu, lastMidiMask = 0;
+    void releaseMasked (PreviewSynth& synth, std::vector<MidiOutEvent>* midiOut, uint32_t layerMask, uint32_t midiMask);
     std::vector<MidiOutEvent> scratch;
 };
 } // namespace te

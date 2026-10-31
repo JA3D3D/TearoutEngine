@@ -35,6 +35,8 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     chordLenBox.addItemList ({ "1/2 Bar", "1 Bar", "2 Bars" }, 1);
     barsBox.addItemList ({ "4 Bars", "8 Bars", "16 Bars", "32 Bars" }, 1);
     midiOutBox.addItemList ({ "Off", "Selected Layer", "All Layers" }, 1);
+    midiOutBox.addSeparator();
+    midiOutBox.addItemList ({ "Chords", "Sub / 808", "Bass A", "Bass B", "Lead", "Arp", "Drums", "FX" }, 4);
 
     for (auto* b : { &genreBox, &keyBox, &progBox, &chordLenBox, &barsBox, &midiOutBox, &patternBox })
         root.addAndMakeVisible (b);
@@ -52,14 +54,14 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     progBox.setTooltip (String::fromUTF8 ("\xe2\x98\x85 = typical for this genre. Auto picks one (GENERATE rolls a new one). From Seed uses your seed clip's chords."));
     chordLenBox.setTooltip ("How long each chord lasts. One chord per bar is the standard.");
     barsBox.setTooltip ("Length of the clip. Drops are usually 16-32 bars; the progression loops inside it.");
-    midiOutBox.setTooltip ("Also send the notes out as MIDI while playing (Selected Layer, or All Layers on channels 1-8).");
+    midiOutBox.setTooltip ("Send a layer out as live MIDI (VST3 only - Live can't take MIDI from Audio Units). On a Serum track set MIDI From = this track / TEAROUT ENGINE and Monitor = In. One layer per Serum track; All Layers uses channels 1-8 but Live merges channels between tracks.");
 
     // ---- buttons ----
     generateBtn.setColour (TextButton::buttonColourId, col::magenta);
     generateBtn.getProperties().set ("solid", true);
     generateBtn.getProperties().set ("fontSize", 19.0f);
-    generateBtn.setTooltip ("New idea: a new progression (when PROGRESSION is Auto), a new hook and arp start. Your patterns stay.");
-    generateBtn.onClick = [this] { proc.generateNew(); setStatus ("New idea generated."); };
+    generateBtn.setTooltip ("A completely new drop: new progression (PROGRESSION on Auto), new patterns for every layer set to 'Genre', new hook and groove. Layers you set to a specific pattern keep it.");
+    generateBtn.onClick = [this] { proc.generateNew(); setStatus ("New drop generated."); };
     variationBtn.setColour (TextButton::buttonColourId, col::cyan);
     variationBtn.getProperties().set ("fontSize", 16.0f);
     variationBtn.setTooltip ("Same song, new groove: only moves where MOVEMENT puts its re-strikes, flicks and slides. Chords, holds and patterns stay.");
@@ -67,8 +69,16 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     playBtn.setColour (TextButton::buttonColourId, col::lime);
     playBtn.getProperties().set ("fontSize", 15.0f);
     playBtn.setClickingTogglesState (true);
-    playBtn.setTooltip ("Play the drop on the built-in preview synth. While Live's transport runs, the preview follows Live.");
+    playBtn.setTooltip ("PLAY / STOP the preview. STOP silences the plugin completely, even while Live is playing.");
     playBtn.onClick = [this] { proc.setPreviewPlaying (playBtn.getToggleState()); };
+    playBtn.onStateChange = [this] { playBtn.setButtonText (playBtn.getToggleState() ? "STOP" : "PLAY"); };
+    playBtn.setButtonText ("PLAY");
+    followBtn.setColour (TextButton::buttonColourId, col::cyan);
+    followBtn.setClickingTogglesState (true);
+    followBtn.getProperties().set ("fontSize", 10.5f);
+    followBtn.setToggleState (proc.isFollowingLive(), dontSendNotification);
+    followBtn.setTooltip ("On: while Live plays, the preview locks to Live's bars and tempo. Off: it loops on its own.");
+    followBtn.onClick = [this] { proc.setFollowLive (followBtn.getToggleState()); };
     captureBtn.setColour (TextButton::buttonColourId, col::hot);
     captureBtn.setClickingTogglesState (true);
     captureBtn.getProperties().set ("fontSize", 14.0f);
@@ -89,8 +99,37 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     allViewBtn.setTooltip ("Show every layer at once.");
     allViewBtn.setComponentID ("all");
     allViewBtn.onClick = [this] { viewAll = allViewBtn.getToggleState(); roll.layer = viewAll ? -1 : proc.selectedLayer.load(); roll.repaint(); };
-    for (auto* b : { &generateBtn, &variationBtn, &playBtn, &captureBtn, &clearSeedBtn, &saveBtn, &allViewBtn })
+    for (auto* b : { &generateBtn, &variationBtn, &playBtn, &captureBtn, &clearSeedBtn, &saveBtn, &allViewBtn, &followBtn })
         root.addAndMakeVisible (b);
+
+    // ---- sound slot (selected layer) ----
+    for (auto* b : { &loadSoundBtn, &clearSoundBtn, &rootDownBtn, &rootUpBtn })
+    {
+        b->setColour (TextButton::buttonColourId, col::cyan);
+        b->getProperties().set ("fontSize", 12.0f);
+        root.addAndMakeVisible (b);
+    }
+    loadSoundBtn.setTooltip ("Load your own sound (WAV / AIFF / FLAC / MP3) for this layer. You can also drop a file onto any pitched layer row.");
+    loadSoundBtn.onClick = [this] { browseForSound (proc.selectedLayer.load()); };
+    clearSoundBtn.setTooltip ("Back to the built-in preview sound.");
+    clearSoundBtn.onClick = [this] { proc.clearLayerSound (proc.selectedLayer.load()); refreshSoundControls(); songChanged(); };
+    rootDownBtn.setTooltip ("The sound's root note is wrong? Nudge it down a semitone.");
+    rootUpBtn.setTooltip ("Nudge the sound's root note up a semitone.");
+    rootDownBtn.onClick = [this] { proc.nudgeRoot (proc.selectedLayer.load(), -1); refreshSoundControls(); };
+    rootUpBtn.onClick = [this] { proc.nudgeRoot (proc.selectedLayer.load(), 1); refreshSoundControls(); };
+    simplerToggle.setColour (ToggleButton::textColourId, col::text);
+    simplerToggle.setColour (ToggleButton::tickColourId, col::lime);
+    simplerToggle.setColour (ToggleButton::tickDisabledColourId, col::dim);
+    simplerToggle.setTooltip ("On: the dragged MIDI is shifted so it plays in tune in a Simpler that holds the dragged SOUND (Simpler's default root is C3). Off: true pitches, for Serum or anything else.");
+    simplerToggle.onClick = [this] { proc.setSimplerMidi (proc.selectedLayer.load(), simplerToggle.getToggleState()); };
+    root.addAndMakeVisible (simplerToggle);
+    soundDrag.makeFile = [this] { return proc.soundFileForDrag (proc.selectedLayer.load()); };
+    soundDrag.onStatus = [this] (const String& s) {
+        setStatus (s.startsWith ("Nothing") ? String ("No sound loaded on this layer.") : "Drop it on an empty MIDI track: Live makes a Simpler. Then drag the MIDI onto the same track.");
+    };
+    soundDrag.big = true;
+    soundDrag.setTooltip ("Drag this layer's sound onto an empty MIDI track: Live puts it in a Simpler. Then drag the MIDI onto the same track.");
+    root.addAndMakeVisible (soundDrag);
 
     root.addAndMakeVisible (volumeKnob);
     volumeKnob.slider.setTooltip ("Preview volume (the MIDI itself has no volume).");
@@ -102,9 +141,10 @@ TearoutEditor::TearoutEditor (TearoutProcessor& p) : AudioProcessorEditor (p), p
     {
         auto* row = rows.add (new LayerRow (l));
         row->onSelect = [this] (int layer) { selectLayer (layer); };
-        row->mute.setToggleState (proc.isMuted (l), dontSendNotification);
+        row->mute.setToggleState (! proc.isMuted (l), dontSendNotification);
+        row->mute.setButtonText (proc.isMuted (l) ? "OFF" : "ON");
         row->solo.setToggleState (proc.isSoloed (l), dontSendNotification);
-        row->mute.onClick = [this, l, row] { proc.setMute (l, row->mute.getToggleState()); roll.repaint(); };
+        row->mute.onClick = [this, l, row] { proc.setMute (l, ! row->mute.getToggleState()); roll.repaint(); };
         row->solo.onClick = [this, l, row] { proc.setSolo (l, row->solo.getToggleState()); roll.repaint(); };
         row->handle.makeFile = [this, l] { return proc.writeLayerMidi (l); };
         row->handle.onStatus = [this] (const String& s) { setStatus (s); };
@@ -184,7 +224,8 @@ void TearoutEditor::layoutRoot()
 
     // transport + main actions
     place (volumeKnob, 640, 14, 74, 90);
-    place (playBtn, 724, 32, 108, 54);
+    place (playBtn, 724, 20, 108, 46);
+    place (followBtn, 724, 70, 108, 26);
     place (generateBtn, 842, 28, 176, 62);
     place (variationBtn, 1026, 32, 156, 54);
 
@@ -211,10 +252,16 @@ void TearoutEditor::layoutRoot()
     // selected layer
     place (layerPanel, 908, 200, 276, 478);
     place (patternBox, 924, 298, 244, 34);
-    place (octaveKnob, 920, 392, 82, 102);
-    place (movementKnob, 1005, 392, 82, 102);
-    place (lengthKnob, 1090, 392, 82, 102);
-    place (layerDrag, 924, 616, 244, 46);
+    place (octaveKnob, 920, 366, 82, 94);
+    place (movementKnob, 1005, 366, 82, 94);
+    place (lengthKnob, 1090, 366, 82, 94);
+    place (loadSoundBtn, 924, 520, 62, 26);
+    place (clearSoundBtn, 990, 520, 62, 26);
+    place (rootDownBtn, 1086, 520, 26, 26);
+    place (rootUpBtn, 1142, 520, 26, 26);
+    place (simplerToggle, 920, 550, 248, 22);
+    place (layerDrag, 924, 612, 244, 46);
+    place (soundDrag, 1048, 612, 120, 46);
 
     // seed + export
     place (bottomPanel, 16, 686, 1168, 82);
@@ -277,7 +324,34 @@ void TearoutEditor::bindLayerControls()
     layerDrag.colour = accent;
     layerDrag.text = String ("DRAG ") + te::layerName ((te::Layer) l) + " MIDI";
     layerDrag.repaint();
+    soundDrag.colour = accent;
+    refreshSoundControls();
     songChanged();
+}
+
+void TearoutEditor::refreshSoundControls()
+{
+    const int l = proc.selectedLayer.load();
+    const bool takes = TearoutProcessor::layerTakesSound (l);
+    const bool has = takes && proc.getSound (l).data != nullptr;
+    loadSoundBtn.setVisible (takes);
+    clearSoundBtn.setVisible (has);
+    rootDownBtn.setVisible (has);
+    rootUpBtn.setVisible (has);
+    simplerToggle.setVisible (has);
+    simplerToggle.setToggleState (has && proc.getSound (l).simplerMidi, dontSendNotification);
+    soundDrag.setVisible (has);
+    layerDrag.setBounds (924, 612, has ? 120 : 244, 46);
+    soundDrag.setBounds (1048, 612, 120, 46);
+    layerDrag.text = has ? String ("MIDI") : String ("DRAG ") + te::layerName ((te::Layer) l) + " MIDI";
+    soundDrag.text = "SOUND";
+    layerDrag.repaint();
+    for (auto* r : rows)
+    {
+        const bool rowHas = proc.getSound (r->layer).data != nullptr;
+        if (r->hasSound != rowHas) { r->hasSound = rowHas; r->repaint(); }
+    }
+    overlay.repaint();
 }
 
 void TearoutEditor::refreshProgressionStars()
@@ -335,7 +409,7 @@ void TearoutEditor::setStatus (const String& s)
 
 void TearoutEditor::timerCallback()
 {
-    const bool running = proc.isHostPlaying() || proc.isPreviewPlaying();
+    const bool running = proc.isRunning();
     const double tick = running ? proc.playheadTicks() : -1.0;
     if (tick != roll.playTick)
     {
@@ -357,6 +431,7 @@ void TearoutEditor::timerCallback()
     const bool cap = proc.isCapturing();
     if (captureBtn.getToggleState() != cap) captureBtn.setToggleState (cap, dontSendNotification);
     if (playBtn.getToggleState() != proc.isPreviewPlaying()) playBtn.setToggleState (proc.isPreviewPlaying(), dontSendNotification);
+    if (followBtn.getToggleState() != proc.isFollowingLive()) followBtn.setToggleState (proc.isFollowingLive(), dontSendNotification);
     blink += 0.25f;
     if (cap || seedZone.capturing != cap)
     {
@@ -379,17 +454,67 @@ static bool isMidiFile (const String& f) { return f.endsWithIgnoreCase (".mid") 
 
 bool TearoutEditor::isInterestedInFileDrag (const StringArray& files)
 {
-    for (auto& f : files) if (isMidiFile (f)) return true;
+    for (auto& f : files) if (isMidiFile (f) || TearoutProcessor::isAudioFile (File (f))) return true;
     return false;
 }
 
-void TearoutEditor::fileDragEnter (const StringArray&, int, int) { seedZone.hovering = true; seedZone.repaint(); }
-void TearoutEditor::fileDragExit (const StringArray&) { seedZone.hovering = false; seedZone.repaint(); }
+int TearoutEditor::rowAt (Point<int> editorPos) const
+{
+    const auto p = root.getLocalPoint (this, editorPos);
+    for (auto* r : rows)
+        if (r->getBounds().contains (p)) return r->layer;
+    return -1;
+}
 
-void TearoutEditor::filesDropped (const StringArray& files, int, int)
+bool TearoutEditor::overLayerPanel (Point<int> editorPos) const
+{
+    return layerPanel.getBounds().contains (root.getLocalPoint (this, editorPos));
+}
+
+void TearoutEditor::setDropHover (int layer)
+{
+    for (auto* r : rows)
+    {
+        const bool h = r->layer == layer;
+        if (r->dropHover != h) { r->dropHover = h; r->repaint(); }
+    }
+}
+
+static bool hasAudio (const StringArray& files)
+{
+    for (auto& f : files) if (TearoutProcessor::isAudioFile (File (f))) return true;
+    return false;
+}
+
+void TearoutEditor::fileDragEnter (const StringArray& files, int x, int y) { fileDragMove (files, x, y); }
+
+void TearoutEditor::fileDragMove (const StringArray& files, int x, int y)
+{
+    if (hasAudio (files))
+    {
+        int l = rowAt ({ x, y });
+        if (l < 0 && overLayerPanel ({ x, y })) l = proc.selectedLayer.load();
+        setDropHover (TearoutProcessor::layerTakesSound (l) ? l : -1);
+        if (seedZone.hovering) { seedZone.hovering = false; seedZone.repaint(); }
+        return;
+    }
+    if (! seedZone.hovering) { seedZone.hovering = true; seedZone.repaint(); }
+}
+
+void TearoutEditor::fileDragExit (const StringArray&)
 {
     seedZone.hovering = false;
+    seedZone.repaint();
+    setDropHover (-1);
+}
+
+void TearoutEditor::filesDropped (const StringArray& files, int x, int y)
+{
+    seedZone.hovering = false;
+    seedZone.repaint();
+    setDropHover (-1);
     for (auto& f : files)
+    {
         if (isMidiFile (f))
         {
             String msg;
@@ -397,7 +522,33 @@ void TearoutEditor::filesDropped (const StringArray& files, int, int)
             setStatus (msg);
             break;
         }
+        if (TearoutProcessor::isAudioFile (File (f)))
+        {
+            int l = rowAt ({ x, y });
+            if (l < 0) l = proc.selectedLayer.load();
+            String msg;
+            if (proc.loadLayerSound (l, File (f), msg)) selectLayer (l);
+            setStatus (msg);
+            break;
+        }
+    }
+    refreshSoundControls();
     songChanged();
+}
+
+void TearoutEditor::browseForSound (int layer)
+{
+    chooser = std::make_unique<FileChooser> ("Choose a sound for " + String (te::layerName ((te::Layer) layer)),
+                                             File::getSpecialLocation (File::userMusicDirectory), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a");
+    chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles, [this, layer] (const FileChooser& fc) {
+        auto f = fc.getResult();
+        if (! f.existsAsFile()) return;
+        String msg;
+        proc.loadLayerSound (layer, f, msg);
+        setStatus (msg);
+        refreshSoundControls();
+        songChanged();
+    });
 }
 
 void TearoutEditor::browseForSeed()
@@ -475,7 +626,41 @@ void TearoutEditor::paintOverlay (Graphics& g)
         const int pid = song->pattern[(size_t) l];
         g.setColour (col::dim);
         g.setFont (uiFont (12.0f));
-        g.drawFittedText (te::patternsFor ((te::Layer) l)[(size_t) pid].help, 924, 336, 244, 48, Justification::topLeft, 4, 0.9f);
+        g.drawFittedText (te::patternsFor ((te::Layer) l)[(size_t) pid].help, 924, 336, 244, 30, Justification::topLeft, 2, 0.85f);
+    }
+    // sound slot
+    caption ("SOUND", 922, 462, 244);
+    if (TearoutProcessor::layerTakesSound (l))
+    {
+        const auto& snd = proc.getSound (l);
+        if (snd.data)
+        {
+            drawNeonText (g, snd.file.getFileNameWithoutExtension(), Rectangle<float> (924, 478, 244, 18), Colours::white, 13.0f);
+            g.setColour (col::dim);
+            g.setFont (uiFont (11.5f));
+            static const char* n[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+            g.drawFittedText ("root " + String (n[snd.root % 12]) + String (snd.root / 12 - 2) + "  " + String::fromUTF8 ("\xc2\xb7") + "  " + snd.rootInfo,
+                              924, 496, 244, 18, Justification::centredLeft, 1, 0.8f);
+            g.setColour (col::text);
+            g.setFont (uiFont (13.0f, true));
+            g.drawText (String (n[snd.root % 12]) + String (snd.root / 12 - 2), 1112, 520, 30, 26, Justification::centred, false);
+            g.setColour (col::dim);
+            g.setFont (uiFont (10.5f, true));
+            g.drawText ("ROOT", 1056, 520, 28, 26, Justification::centredRight, false);
+        }
+        else
+        {
+            g.setColour (col::dim);
+            g.setFont (uiFont (11.5f));
+            g.drawFittedText ("Preview with your own sound: drop a WAV / AIFF on this layer's row, or LOAD.", 924, 478, 244, 36,
+                              Justification::topLeft, 2, 0.9f);
+        }
+    }
+    else
+    {
+        g.setColour (col::dim);
+        g.setFont (uiFont (11.5f));
+        g.drawFittedText ("Sound slots are for the pitched layers (chords, sub, bass, lead, arp).", 924, 478, 244, 36, Justification::topLeft, 2, 0.9f);
     }
     if (song && ! song->layers[(size_t) l].empty())
     {
@@ -487,13 +672,8 @@ void TearoutEditor::paintOverlay (Graphics& g)
             stats << "  " << String::fromUTF8 ("\xc2\xb7") << "  " << u8 (te::pitchName (lo, song->flats)) << " - " << u8 (te::pitchName (hi, song->flats));
         g.setColour (accent.withAlpha (0.9f));
         g.setFont (uiFont (12.0f, true));
-        g.drawText (stats, 924, 586, 244, 18, Justification::centredLeft, false);
+        g.drawText (stats, 924, 582, 244, 18, Justification::centredLeft, false);
     }
-    g.setColour (col::dim.withAlpha (0.9f));
-    g.setFont (uiFont (11.5f));
-    g.drawFittedText ("MOVEMENT adds groove only: re-strikes, octave flicks, approach notes and slides. "
-                      "It never removes notes or changes chords.  VARIATION moves where they land.",
-                      924, 500, 244, 58, Justification::topLeft, 5, 0.9f);
 }
 
 } // namespace tep

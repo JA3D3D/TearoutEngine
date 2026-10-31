@@ -337,9 +337,10 @@ LayerRow::LayerRow (int l) : layer (l), handle ("MIDI", col::layer (l))
         b->getProperties().set ("fontSize", 11.0f);
         addAndMakeVisible (*b);
     }
-    mute.setColour (TextButton::buttonColourId, col::amber);
+    mute.setColour (TextButton::buttonColourId, col::lime);
+    mute.onStateChange = [this] { mute.setButtonText (mute.getToggleState() ? "ON" : "OFF"); };
     solo.setColour (TextButton::buttonColourId, col::lime);
-    mute.setTooltip ("Mute this layer in the preview (it still exports).");
+    mute.setTooltip ("Turn this layer on/off in the preview (it still exports and drags).");
     solo.setTooltip ("Solo this layer in the preview.");
     handle.setTooltip ("Drag this layer's MIDI clip onto a track in Ableton.");
     addAndMakeVisible (handle);
@@ -350,9 +351,9 @@ void LayerRow::resized()
     auto r = getLocalBounds().reduced (6, 7);
     handle.setBounds (r.removeFromRight (74));
     r.removeFromRight (6);
-    solo.setBounds (r.removeFromRight (26).withSizeKeepingCentre (26, 24));
+    solo.setBounds (r.removeFromRight (24).withSizeKeepingCentre (24, 24));
     r.removeFromRight (3);
-    mute.setBounds (r.removeFromRight (26).withSizeKeepingCentre (26, 24));
+    mute.setBounds (r.removeFromRight (36).withSizeKeepingCentre (36, 24));
 }
 
 void LayerRow::paint (Graphics& g)
@@ -361,6 +362,13 @@ void LayerRow::paint (Graphics& g)
     const auto c = col::layer (layer);
     g.setColour (selected ? c.withAlpha (0.16f) : Colours::white.withAlpha (isMouseOver (true) ? 0.04f : 0.015f));
     g.fillRoundedRectangle (r, 9.0f);
+    if (dropHover)
+    {
+        g.setColour (c.withAlpha (0.35f));
+        g.fillRoundedRectangle (r, 9.0f);
+        g.setColour (Colours::white);
+        g.drawRoundedRectangle (r, 9.0f, 2.0f);
+    }
     g.setColour (selected ? c.withAlpha (0.9f) : Colours::white.withAlpha (0.08f));
     g.drawRoundedRectangle (r, 9.0f, selected ? 1.4f : 1.0f);
     if (selected)
@@ -384,9 +392,22 @@ void LayerRow::paint (Graphics& g)
 
     auto t = r.withTrimmedLeft (30).withRight ((float) mute.getX() - 4);
     drawNeonText (g, laneNames[layer], t.withTrimmedBottom (t.getHeight() * 0.45f), hasNotes ? c : col::dim, 15.0f, Justification::bottomLeft);
+    auto sub = t.withTrimmedTop (t.getHeight() * 0.56f);
+    if (hasSound)
+    {
+        // a small speaker badge: this layer previews with your own sound
+        auto badge = sub.removeFromLeft (14.0f).withSizeKeepingCentre (12.0f, 10.0f);
+        Path spk;
+        spk.addRectangle (badge.getX(), badge.getCentreY() - 2.0f, 3.0f, 4.0f);
+        spk.addTriangle (badge.getX() + 3.0f, badge.getCentreY() - 2.0f, badge.getX() + 7.0f, badge.getY(), badge.getX() + 7.0f, badge.getBottom());
+        spk.addTriangle (badge.getX() + 3.0f, badge.getCentreY() + 2.0f, badge.getX() + 7.0f, badge.getBottom(), badge.getX() + 3.0f, badge.getCentreY() - 2.0f);
+        g.setColour (c);
+        g.fillPath (spk);
+        g.drawLine (badge.getX() + 9.0f, badge.getY() + 2.0f, badge.getX() + 9.0f, badge.getBottom() - 2.0f, 1.2f);
+    }
     g.setColour (col::dim);
     g.setFont (uiFont (11.5f));
-    g.drawText (patternText, t.withTrimmedTop (t.getHeight() * 0.56f), Justification::topLeft, true);
+    g.drawText (patternText, sub, Justification::topLeft, true);
 }
 
 void LayerRow::mouseUp (const MouseEvent& e)

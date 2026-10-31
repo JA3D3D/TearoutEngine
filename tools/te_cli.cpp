@@ -2,6 +2,7 @@
 #include "../src/core/Engine.h"
 #include "../src/core/MidiFile.h"
 #include "../src/core/Synth.h"
+#include "../src/core/Sample.h"
 
 #include <algorithm>
 #include <cmath>
@@ -153,35 +154,17 @@ static std::shared_ptr<SampleData> loadWav (const std::string& path, int root)
         pos = body + len + (len & 1);
     }
     if (out->left.size() < 64) return nullptr;
-    out->sampleRate = rate;
-    out->rootNote = root;
-    // sustain loop over the steady part of the sound (RMS >= 70 % of max), crossfaded
-    const size_t n = out->left.size(), win = (size_t) (rate * 0.05);
-    std::vector<float> env;
-    for (size_t i = 0; i + win <= n; i += win)
+    if (root < 0)
     {
-        double e = 0;
-        for (size_t k = i; k < i + win; ++k) e += out->left[k] * out->left[k];
-        env.push_back ((float) std::sqrt (e / (double) win));
+        std::vector<float> mono (out->left.size());
+        for (size_t i = 0; i < mono.size(); ++i) mono[i] = 0.5f * (out->left[i] + out->right[i]);
+        auto rc = chooseRoot (mono, rate, path);
+        root = rc.midi;
+        std::printf ("root: %s\n", rc.reason.c_str());
     }
-    float peak = 0;
-    for (float e : env) peak = std::max (peak, e);
-    size_t a = env.size(), b = 0;
-    for (size_t i = 0; i < env.size(); ++i)
-        if (env[i] >= 0.7f * peak) { a = std::min (a, i); b = i; }
-    if (b > a + 6)
-    {
-        size_t ls = (a + (b - a) / 4) * win, le = b * win;
-        const size_t xf = std::min<size_t> ((size_t) (rate * 0.04), ls);
-        for (size_t i = 0; i < xf; ++i)
-        {
-            float t = (float) i / (float) xf;
-            out->left[le - xf + i] = out->left[le - xf + i] * (1 - t) + out->left[ls - xf + i] * t;
-            out->right[le - xf + i] = out->right[le - xf + i] * (1 - t) + out->right[ls - xf + i] * t;
-        }
-        out->loopStart = (int) ls;
-        out->loopEnd = (int) le;
-    }
+    auto ready = makeSampleData (out->left, out->right, rate, root);
+    out = ready;
+    const size_t n = out->left.size();
     std::printf ("sample %s: %zu frames @ %u Hz, root %d, loop %d..%d\n", path.c_str(), n, rate, root, out->loopStart, out->loopEnd);
     return out;
 }
@@ -286,7 +269,7 @@ int main (int argc, char** argv)
             else if (k.rfind ("gain", 0) == 0) g_gains[std::atoi (k.c_str() + 4)] = (float) std::atof (argv[i + 1]);
         }
         for (auto& kv : samplePaths)
-            if (auto smp = loadWav (kv.second, roots.count (kv.first) ? roots[kv.first] : 60)) g_samples[kv.first] = smp;
+            if (auto smp = loadWav (kv.second, roots.count (kv.first) ? roots[kv.first] : -1)) g_samples[kv.first] = smp;
         Song song = generate (s);
         std::string base = argv[2];
         writeFile (base + ".mid", writeMidi (songTracks (song, "TE"), song.bpm));

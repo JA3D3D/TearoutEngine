@@ -34,7 +34,16 @@ int resolvePattern (const Settings& s, Layer layer) noexcept
     const int idx = s.layers[(size_t) layer].pattern;
     const int count = (int) patternsFor (layer).size();
     if (idx <= 0 || idx > count)
-        return genreProfile (s.genre).defaults[(int) layer];
+    {
+        // song seed 1 (a fresh plugin) and 1.0 sets keep the genre's classic pattern
+        if (! s.patternPools || s.songSeed == 1)
+            return genreProfile (s.genre).defaults[(int) layer];
+        const auto& pool = genrePatternPool (s.genre, layer);
+        std::vector<double> w;
+        for (auto& p : pool) w.push_back (p.second);
+        Rng r { (uint64_t) s.songSeed, 700, (uint64_t) s.genre, (uint64_t) layer };
+        return pool[(size_t) r.weighted (w)].first;
+    }
     return idx - 1;
 }
 

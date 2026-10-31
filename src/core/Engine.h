@@ -54,6 +54,7 @@ struct Settings
     int bars = 8;             // 4, 8, 16, 32
     uint32_t songSeed = 1;    // GENERATE: progression pick (Auto), hook contour, arp choices
     uint32_t grooveSeed = 1;  // VARIATION: where the movement goes
+    bool patternPools = true; // "Genre" layers pick from the genre's pattern pool by song seed (1.1); false = fixed defaults (1.0 sets)
     std::array<LayerSettings, kNumLayers> layers {};
 
     Settings();

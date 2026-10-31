@@ -112,8 +112,10 @@ public:
     int layer;
     bool selected = false;
     bool hasNotes = false;
+    bool hasSound = false;
+    bool dropHover = false;
     juce::String patternText;
-    juce::TextButton mute { "M" }, solo { "S" };
+    juce::TextButton mute { "ON" }, solo { "S" }; // "mute" is the ON/OFF switch: toggled = audible
     DragHandle handle;
     std::function<void (int)> onSelect;
 };

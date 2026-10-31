@@ -321,7 +321,7 @@ void PreviewSynth::renderVoice (Voice& v, float* L, float* R, int n)
                 v.freq += (v.target - v.freq) * k;
                 if (std::fabs (v.freq - v.target) < 0.01) v.freq = v.target;
             }
-            if (const auto* smp = layerSample[(size_t) v.layer].get())
+            if (const auto* smp = layerSample[(size_t) v.layer])
             {
                 // ---- user sample: pitched playback with a sustain loop ----
                 switch (v.stage)
@@ -500,16 +500,41 @@ std::shared_ptr<const PlayData> makePlayData (const Song& song)
     return d;
 }
 
-void SongPlayer::releaseAll (PreviewSynth& synth, std::vector<MidiOutEvent>* midiOut, uint32_t midiMask, int offset)
+void SongPlayer::releaseAll (PreviewSynth& synth, std::vector<MidiOutEvent>* midiOut, uint32_t, int offset)
 {
     for (int l = 0; l < kNumLayers; ++l)
         for (int p = 0; p < 128; ++p)
-            if (held[(size_t) l][(size_t) p])
+        {
+            if (heldSynth[(size_t) l][(size_t) p])
             {
                 synth.noteOff (l, p);
-                if (midiOut && ((midiMask >> l) & 1u)) midiOut->push_back ({ offset, l, p, 0, false });
-                held[(size_t) l][(size_t) p] = false;
+                heldSynth[(size_t) l][(size_t) p] = false;
             }
+            if (heldMidi[(size_t) l][(size_t) p])
+            {
+                if (midiOut) midiOut->push_back ({ offset, l, p, 0, false });
+                heldMidi[(size_t) l][(size_t) p] = false;
+            }
+        }
+}
+
+// A layer switched off (or taken off MIDI OUT) stops right away instead of ringing to its note-off.
+void SongPlayer::releaseMasked (PreviewSynth& synth, std::vector<MidiOutEvent>* midiOut, uint32_t layerMask, uint32_t midiMask)
+{
+    for (int l = 0; l < kNumLayers; ++l)
+        for (int p = 0; p < 128; ++p)
+        {
+            if (! ((layerMask >> l) & 1u) && heldSynth[(size_t) l][(size_t) p])
+            {
+                synth.noteOff (l, p);
+                heldSynth[(size_t) l][(size_t) p] = false;
+            }
+            if ((! midiOut || ! ((midiMask >> l) & 1u)) && heldMidi[(size_t) l][(size_t) p])
+            {
+                if (midiOut) midiOut->push_back ({ 0, l, p, 0, false });
+                heldMidi[(size_t) l][(size_t) p] = false;
+            }
+        }
 }
 
 void SongPlayer::process (PreviewSynth& synth, float* L, float* R, int n, double startTick, double tps, bool playing,
@@ -536,6 +561,12 @@ void SongPlayer::process (PreviewSynth& synth, const PlayData* d, float* L, floa
     const double total = d->totalTicks;
     double pos = std::fmod (startTick, total);
     if (pos < 0) pos += total;
+    if (layerMask != lastLayerMask || midiMask != lastMidiMask)
+    {
+        releaseMasked (synth, midiOut, layerMask, midiOut ? midiMask : 0u);
+        lastLayerMask = layerMask;
+        lastMidiMask = midiMask;
+    }
     const bool jumped = ! wasPlaying || d != lastData || expected < 0 || std::fabs (pos - expected) > 1.5;
     if (jumped && wasPlaying) releaseAll (synth, midiOut, midiMask, 0);
     wasPlaying = true;
@@ -580,25 +611,37 @@ void SongPlayer::process (PreviewSynth& synth, const PlayData* d, float* L, floa
             synth.render (L + done, R + done, e.sampleOffset - done);
             done = e.sampleOffset;
         }
-        auto& h = held[(size_t) e.layer];
+        auto& hs = heldSynth[(size_t) e.layer];
+        auto& hm = heldMidi[(size_t) e.layer];
+        const bool toSynth = (layerMask >> e.layer) & 1u;
+        const bool toMidi = midiOut && ((midiMask >> e.layer) & 1u);
         if (e.on)
         {
-            if (! ((layerMask >> e.layer) & 1u)) continue;
-            if (h[(size_t) e.pitch])
+            if (toSynth)
             {
-                synth.noteOff (e.layer, e.pitch);
-                if (midiOut && ((midiMask >> e.layer) & 1u)) midiOut->push_back ({ e.sampleOffset, e.layer, e.pitch, 0, false });
+                if (hs[(size_t) e.pitch]) synth.noteOff (e.layer, e.pitch);
+                synth.noteOn (e.layer, e.pitch, e.velocity);
+                hs[(size_t) e.pitch] = true;
             }
-            synth.noteOn (e.layer, e.pitch, e.velocity);
-            h[(size_t) e.pitch] = true;
-            if (midiOut && ((midiMask >> e.layer) & 1u)) midiOut->push_back (e);
+            if (toMidi)
+            {
+                if (hm[(size_t) e.pitch]) midiOut->push_back ({ e.sampleOffset, e.layer, e.pitch, 0, false });
+                midiOut->push_back (e);
+                hm[(size_t) e.pitch] = true;
+            }
         }
         else
         {
-            if (! h[(size_t) e.pitch]) continue;
-            synth.noteOff (e.layer, e.pitch);
-            h[(size_t) e.pitch] = false;
-            if (midiOut && ((midiMask >> e.layer) & 1u)) midiOut->push_back (e);
+            if (hs[(size_t) e.pitch])
+            {
+                synth.noteOff (e.layer, e.pitch);
+                hs[(size_t) e.pitch] = false;
+            }
+            if (hm[(size_t) e.pitch])
+            {
+                if (midiOut) midiOut->push_back (e);
+                hm[(size_t) e.pitch] = false;
+            }
         }
     }
     if (done < n) synth.render (L + done, R + done, n - done);

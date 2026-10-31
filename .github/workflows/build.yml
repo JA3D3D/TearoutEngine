@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  TE_VERSION: 1.1.0
+
 jobs:
   engine-tests:
     name: Engine tests + example MIDI
@@ -96,13 +99,13 @@ jobs:
           printf '#!/bin/sh\nkillall -9 AudioComponentRegistrar >/dev/null 2>&1 || true\nexit 0\n' > scripts/postinstall
           chmod +x scripts/postinstall
           pkgbuild --root "$R" --component-plist components.plist --scripts scripts \
-            --identifier com.tearout.engine.pkg --version 1.0.0 --install-location / dist/TEAROUT_ENGINE_1.0_macOS.pkg
+            --identifier com.tearout.engine.pkg --version "$TE_VERSION" --install-location / "dist/TEAROUT_ENGINE_${TE_VERSION}_macOS.pkg"
       - uses: actions/upload-artifact@v4
         with:
           name: TEAROUT_ENGINE_macOS
           path: |
             dist/TEAROUT_ENGINE_macOS.zip
-            dist/TEAROUT_ENGINE_1.0_macOS.pkg
+            dist/TEAROUT_ENGINE_*_macOS.pkg
       - name: Validate the Audio Unit (auval)
         continue-on-error: true
         run: |
@@ -148,12 +151,20 @@ jobs:
           path: artifacts
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', env.TE_VERSION) }}
           target_commitish: ${{ github.sha }}
-          name: TEAROUT ENGINE 1.0
+          name: TEAROUT ENGINE ${{ env.TE_VERSION }}
           make_latest: true
           body: |
-            **Mac:** download `TEAROUT_ENGINE_1.0_macOS.pkg` and double-click it. It installs the VST3, the AU and the standalone app (Apple Silicon + Intel).
+            **What's new in 1.1**
+            - **Sound slots:** drop your own WAV / AIFF on any pitched layer (or LOAD it). The preview plays your sound; the root note is detected from the audio. Drag **SOUND** onto an empty MIDI track (Live makes a Simpler), then drag **MIDI** onto the same track: it plays in tune ("Simpler-ready MIDI").
+            - **PLAY / STOP** silences the plugin completely, even while Live plays. **FOLLOW LIVE** locks it to Live's transport (or lets it loop on its own).
+            - **ON / OFF** per layer, and the sound stops the moment you switch a layer off.
+            - **GENERATE** now makes a completely new drop: new progression (on Auto), new patterns for every layer set to "Genre", new hook and groove. VARIATION still only moves the groove.
+            - **MIDI OUT** can send one chosen layer (VST3) to drive Serum on another track.
+            - Sets saved with 1.0 open exactly as they were.
+
+            **Mac:** quit Live, then install `TEAROUT_ENGINE_${{ env.TE_VERSION }}_macOS.pkg` (double-click, or `sudo installer -pkg ~/Downloads/TEAROUT_ENGINE_${{ env.TE_VERSION }}_macOS.pkg -target /`). It installs the VST3, the AU and the standalone app (Apple Silicon + Intel) over the previous version.
             The installer isn't notarized: if macOS blocks it, right-click it, choose **Open**, or use System Settings → Privacy & Security → **Open Anyway**.
             Then in Live 11: Preferences → Plug-Ins → turn on Audio Units / VST3 system folders → **Rescan**.
 

@@ -2,6 +2,7 @@
 #include "../src/core/Engine.h"
 #include "../src/core/MidiFile.h"
 #include "../src/core/Synth.h"
+#include "../src/core/Sample.h"
 
 #include <algorithm>
 #include <cmath>
@@ -611,6 +612,113 @@ static void testPlayer()
     }
 }
 
+// ---- 1.1: GENERATE picks new patterns, user sounds -----------------------------------------------------
+static void testGenerateVaries()
+{
+    for (int g = 0; g < kNumGenres; ++g)
+    {
+        std::set<std::vector<int>> combos;
+        std::set<std::string> progs;
+        for (uint32_t seed = 2; seed <= 40; ++seed)
+        {
+            Settings s = base ((Genre) g);
+            s.songSeed = seed;
+            Song song = generate (s);
+            combos.insert (std::vector<int> (song.pattern.begin(), song.pattern.end()));
+            progs.insert (song.progressionLabel);
+            for (int l = 0; l < kNumLayers; ++l)
+            {
+                bool inPool = false;
+                for (auto& pp : genrePatternPool ((Genre) g, (Layer) l)) inPool = inPool || pp.first == song.pattern[(size_t) l];
+                CHECK (inPool, "GENERATE only picks patterns the genre uses");
+            }
+        }
+        CHECK (combos.size() >= ((Genre) g == Genre::Trap ? 3u : 5u), "GENERATE gives different layer patterns");
+        Settings one = base ((Genre) g);
+        Song first = generate (one);
+        for (int l = 0; l < kNumLayers; ++l)
+            CHECK (first.pattern[(size_t) l] == genreProfile ((Genre) g).defaults[l], "a fresh plugin starts on the classic patterns");
+        Settings legacy = base ((Genre) g);
+        legacy.songSeed = 777;
+        legacy.patternPools = false;
+        Song old = generate (legacy);
+        for (int l = 0; l < kNumLayers; ++l)
+            CHECK (old.pattern[(size_t) l] == genreProfile ((Genre) g).defaults[l], "1.0 sets keep their patterns");
+    }
+}
+
+static std::vector<float> testTone (double hz, double seconds, double sr, bool growl)
+{
+    std::vector<float> x ((size_t) (seconds * sr));
+    double ph = 0;
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        const double t = (double) i / sr;
+        ph += hz / sr;
+        double v = 0;
+        for (int h = 1; h <= 12; ++h) v += std::sin (2 * 3.14159265358979 * h * ph) / h * (growl ? (1.0 + 0.6 * std::sin (2 * 3.14159265358979 * (2.5 * t + h * 0.3))) : 1.0);
+        x[i] = (float) std::tanh ((growl ? 2.5 : 0.8) * v);
+    }
+    return x;
+}
+
+static void testSamples()
+{
+    const double sr = 44100.0;
+    for (double hz : { 32.70, 34.65, 41.20, 55.0, 98.0, 146.83, 220.0, 440.0 })
+        for (bool growl : { false, true })
+        {
+            auto g = detectPitch (testTone (hz, 2.0, sr, growl), sr);
+            const int want = (int) std::lround (69 + 12 * std::log2 (hz / 440.0));
+            CHECK (g.midi == want, "pitch detection finds the note");
+            if (g.midi != want) std::printf ("    %.2f Hz growl=%d -> %d (%.2f Hz, conf %.2f)\n", hz, (int) growl, g.midi, g.hz, g.confidence);
+        }
+    {
+        std::vector<float> noise (88200);
+        uint32_t st = 1;
+        for (auto& v : noise) { st = st * 1664525u + 1013904223u; v = (float) ((int32_t) st) / 2147483648.0f; }
+        auto r = chooseRoot (noise, sr, "Noise Sweep.wav");
+        CHECK (! r.reason.empty(), "noise gets a root without crashing");
+    }
+    struct NameCase { const char* name; int pc; int oct; };
+    for (auto c : { NameCase { "Cymatics - Sustained Growl 808 - C.wav", 0, -99 }, NameCase { "DS_TD_bass_synth_sustain_C.wav", 0, -99 },
+                    NameCase { "Bass F#1 long.wav", 6, 1 }, NameCase { "reese_Bb0.wav", 10, 0 }, NameCase { "Am pad.wav", 9, -99 },
+                    NameCase { "Bass Growl.wav", -1, -99 }, NameCase { "Sub_D-1.wav", 2, -1 }, NameCase { "growl_C#min.aif", 1, -99 },
+                    NameCase { "/Users/x/Samples/Yoi Bass - G.wav", 7, -99 } })
+    {
+        int oct;
+        const int got = noteFromFileName (c.name, oct);
+        CHECK (got == c.pc && (c.pc < 0 || oct == c.oct), "note from file name");
+        if (got != c.pc || (c.pc >= 0 && oct != c.oct)) std::printf ("    %s -> %d oct %d\n", c.name, got, oct);
+    }
+    {
+        auto tone = testTone (34.65, 3.0, sr, true);
+        auto r = chooseRoot (tone, sr, "DS_TD_bass_synth_sustain_C.wav");
+        CHECK (r.midi == 25 && r.detected, "the audio wins over a wrong file name");
+        auto smp = makeSampleData (tone, tone, sr, r.midi);
+        CHECK (smp->loopStart > 0 && smp->loopEnd > smp->loopStart && smp->loopEnd <= (int) smp->left.size(), "sustain loop found");
+        CHECK (smp->gain > 0.05f && smp->gain < 6.0f, "sound levelled");
+        // play it through the synth on BASS A for a long hold: it must keep sounding past the sample's end
+        PreviewSynth synth;
+        synth.prepare (sr);
+        synth.setLayerSample ((int) Layer::BassA, smp);
+        synth.noteOn ((int) Layer::BassA, 30, 110);
+        std::vector<float> L (512), R (512);
+        double lateEnergy = 0;
+        bool finite = true;
+        for (int b = 0; b < (int) (6.0 * sr / 512); ++b)
+        {
+            std::fill (L.begin(), L.end(), 0.0f);
+            std::fill (R.begin(), R.end(), 0.0f);
+            synth.render (L.data(), R.data(), 512);
+            for (float v : L) { finite = finite && std::isfinite (v); if (b * 512 > 4.0 * sr) lateEnergy += v * v; }
+        }
+        CHECK (finite, "sample voice output finite");
+        CHECK (lateEnergy > 1.0, "a held sample keeps sounding through its loop");
+        synth.noteOff ((int) Layer::BassA, 30);
+    }
+}
+
 int main()
 {
     std::printf ("TEAROUT ENGINE engine tests\n");
@@ -622,6 +730,8 @@ int main()
     testSeeds();
     testMidi();
     testPlayer();
+    testGenerateVaries();
+    testSamples();
     std::printf ("%d checks, %d failed\n", g_checks, g_fail);
     if (g_fail)
         for (auto& f : g_failures) std::printf ("  %5d x %s\n", f.second, f.first.c_str());
